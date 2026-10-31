@@ -1,0 +1,19 @@
+# The encoder's and the cache records' invariants, on the host: the proxy
+# itself only builds for Windows, so its pure modules come in by #[path].
+#   cargo test-host (from the root; .cargo/config.toml)
+[package]
+name = "wow-font-d3d9-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+adler2 = { version = "2.0.1", default-features = false }
+ttf-parser = "0.25.1"
+
+[profile.test]
+opt-level = 3

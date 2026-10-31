@@ -1,0 +1,8 @@
+# Cargo's own; release builds come from Nix (nix build).
+/target
+# nix build
+/result
+/result-*
+# direnv's cache of the dev shell
+/.direnv
+/tests/target

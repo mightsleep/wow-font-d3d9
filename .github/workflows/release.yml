@@ -1,0 +1,40 @@
+# A tag vX.Y.Z (the version in Cargo.toml) makes a release: the zip from
+# `nix build .#release`, built twice to be sure it is reproducible, and
+# its SHA-256.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: The tag is the crate's version
+        run: |
+          want="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME, Cargo.toml $want"; exit 1; }
+      - run: nix flake check -L
+      - name: Build, twice
+        run: |
+          nix build -L .#release
+          nix build -L .#release --rebuild
+          zip="wow-font-d3d9-${GITHUB_REF_NAME#v}.zip"
+          cp -L result "$zip"
+          sha256sum "$zip" > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip="wow-font-d3d9-${GITHUB_REF_NAME#v}.zip"
+          cat > notes.md <<NOTES
+          Unpack next to \`Wow.exe\` (see README.md inside).
+
+          The zip is reproducible: \`nix build github:${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}#release\`
+          gives the same bytes, \`$(cut -d' ' -f1 SHA256SUMS)\`.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" "$zip" SHA256SUMS --title "$GITHUB_REF_NAME" --notes-file notes.md

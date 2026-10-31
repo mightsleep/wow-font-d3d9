@@ -1,0 +1,25 @@
+[package]
+name = "wow-font-d3d9"
+version = "0.1.0"
+edition = "2024"
+description = "Vector text for WoW 3.3.5a: a proxy d3d9.dll that draws the game's text from font outlines"
+license = "GPL-3.0-or-later"
+authors = ["mightsleep <acannix@proton.me>"]
+repository = "https://github.com/mightsleep/wow-font-d3d9"
+publish = false
+# tests/ is a crate of its own, built for the host (this one is a Windows DLL).
+autotests = false
+
+[lib]
+name = "d3d9"
+crate-type = ["cdylib"]
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+strip = true
+
+[dependencies]
+ttf-parser = "0.25.1"
+adler2 = { version = "2.0.1", default-features = false }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }

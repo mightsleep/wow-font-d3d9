@@ -1,0 +1,4 @@
+# The host's tests (tests/, a crate of their own) from the repository's
+# root, also in the dev shell, whose CARGO_BUILD_TARGET is the DLL's.
+[alias]
+test-host = "test --manifest-path tests/Cargo.toml --target x86_64-unknown-linux-gnu"
