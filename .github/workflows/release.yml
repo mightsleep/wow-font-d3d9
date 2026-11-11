@@ -1,6 +1,7 @@
 # A tag vX.Y.Z (the version in Cargo.toml) makes a release: the zip from
 # `nix build .#release`, built twice to be sure it is reproducible, and
-# its SHA-256.
+# the SHA-256 of it and of the DLL inside (which changes only with the
+# code, not with the README).
 name: release
 on:
   push:
@@ -24,7 +25,12 @@ jobs:
           nix build -L .#release --rebuild
           zip="wow-font-d3d9-${GITHUB_REF_NAME#v}.zip"
           cp -L result "$zip"
-          sha256sum "$zip" > SHA256SUMS
+          # The DLL under its path in the zip: unpacked next to SHA256SUMS,
+          # sha256sum -c checks both.
+          d="wow-font-d3d9-${GITHUB_REF_NAME#v}"
+          nix build -L .#default -o dll
+          mkdir -p "$d" && cp -L dll/d3d9.dll "$d/d3d9.dll"
+          sha256sum "$zip" "$d/d3d9.dll" > SHA256SUMS
           cat SHA256SUMS
       - name: Publish
         env:
@@ -35,6 +41,10 @@ jobs:
           Unpack next to \`Wow.exe\` (see README.md inside).
 
           The zip is reproducible: \`nix build github:${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}#release\`
-          gives the same bytes, \`$(cut -d' ' -f1 SHA256SUMS)\`.
+          gives the same bytes. SHA-256 of the zip and of the DLL in it:
+
+          \`\`\`
+          $(cat SHA256SUMS)
+          \`\`\`
           NOTES
           gh release create "$GITHUB_REF_NAME" "$zip" SHA256SUMS --title "$GITHUB_REF_NAME" --notes-file notes.md
