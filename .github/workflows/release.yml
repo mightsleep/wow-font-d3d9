@@ -1,13 +1,15 @@
 # A tag vX.Y.Z (the version in Cargo.toml) makes a release: d3d9.dll on its
 # own for players, the zip from `nix build .#release` (the DLL, a sample
 # ini, README, LICENSE) built twice to be sure it is reproducible, and the
-# SHA-256 of both.
+# SHA-256 of both, with a provenance attestation for the DLL and the zip.
 name: release
 on:
   push:
     tags: ['v*']
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -32,6 +34,12 @@ jobs:
           mkdir -p "$d" && cp d3d9.dll "$d/d3d9.dll"
           sha256sum d3d9.dll "$d.zip" "$d/d3d9.dll" > SHA256SUMS
           cat SHA256SUMS
+      - name: Attest
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            d3d9.dll
+            wow-font-d3d9-*.zip
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,5 +63,7 @@ jobs:
           SHA-256: \`d3d9.dll\` ${dll}, the zip ${zip} (all in \`SHA256SUMS\`).
           The build is reproducible: \`nix build github:${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}#release\`
           gives the same zip.
+          GitHub attests both were built here from this tag:
+          \`gh attestation verify d3d9.dll -R ${GITHUB_REPOSITORY}\`.
           NOTES
           gh release create "$GITHUB_REF_NAME" d3d9.dll "$d.zip" SHA256SUMS --title "$GITHUB_REF_NAME" --notes-file notes.md
