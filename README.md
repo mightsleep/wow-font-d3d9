@@ -16,6 +16,68 @@ AMD RX 480 (driver 31.0.21921.1000); other GPUs and drivers on Windows
 are untested, as is the MSVC build. The client's structures are read at fixed offsets, so
 any build other than 12340 is unsupported.
 
+Only the look of the text changes: the client still picks the fonts,
+sizes, colours and layout.
+
+## Install
+
+1. Download `d3d9.dll` from the
+   [latest release](https://github.com/mightsleep/wow-font-d3d9/releases/latest).
+2. Copy it next to `Wow.exe`.
+3. Start the game. A `wow-font-d3d9.log` next to `Wow.exe` says the proxy
+   loaded.
+
+The proxy loads the real `d3d9.dll` from the system directory. If you
+already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it,
+say to `d3d9_dxvk.dll`, and point `WOW_FONT_D3D9_REAL` at it. On Windows,
+start the game from a `.bat` next to `Wow.exe`:
+
+    set WOW_FONT_D3D9_REAL=d3d9_dxvk.dll
+    start Wow.exe
+
+Under Wine, tell it to take the DLL from the game folder:
+
+    WINEDLLOVERRIDES="d3d9=n,b" wine Wow.exe
+
+(in Lutris: Runner options, DLL overrides, `d3d9` = `n,b`). The real
+`d3d9.dll` is then the prefix's: wined3d, or DXVK if it is installed
+there.
+
+To remove it, delete `d3d9.dll`. The proxy's other files,
+`wow-font-d3d9.log`, `wow-font-d3d9.ini` and `Cache\wow-font-d3d9\`, can
+go too.
+
+## Settings
+
+`wow-font-d3d9.ini` next to `Wow.exe`, one `key = number` a line, `#`
+comments. It is read again whenever it changes, with the game running,
+so `v2 = 0` and back compares the proxy's text with the client's in
+place.
+
+| key       | default | meaning |
+|-----------|---------|---------|
+| `gamma`   | 1.5     | alpha = coverage^(1/gamma) |
+| `outline` | 0.25    | pixels added to the client's outline radius |
+| `v2`      | 1       | 0: the client's bitmaps for every font, as without the proxy |
+| `words`   | 1       | 0: magnified text reads the bands, not the texel words; 2: the words' path in colour |
+
+Environment variables:
+
+| variable               | meaning |
+|------------------------|---------|
+| `WOW_FONT_D3D9`        | `0`: forward only |
+| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll` |
+| `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
+| `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
+
+## Reporting problems
+
+Open an [issue](https://github.com/mightsleep/wow-font-d3d9/issues) with
+`wow-font-d3d9.log`, your OS, GPU and driver (and Wine and DXVK versions
+on Linux), a screenshot, and the addons that draw the text in question.
+If text looks wrong, a screenshot with `v2 = 0` beside one with `v2 = 1`
+shows whether it is the proxy's.
+
 ## What it does, and what it does not
 
 - It forwards every call to the real `d3d9.dll` and hooks objects by
@@ -37,42 +99,6 @@ any build other than 12340 is unsupported.
   own risk.
 
 Set `WOW_FONT_D3D9=0` and it only forwards.
-
-## Install
-
-Copy `d3d9.dll` next to `Wow.exe`.
-
-The proxy loads the real `d3d9.dll` from the system directory. If you
-already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it and
-point `WOW_FONT_D3D9_REAL` at it.
-
-Under Wine, tell it to take the DLL from the game folder:
-
-    WINEDLLOVERRIDES="d3d9=n,b" wine Wow.exe
-
-The real `d3d9.dll` is then the prefix's: wined3d, or DXVK if it is
-installed there.
-
-## Settings
-
-`wow-font-d3d9.ini` next to `Wow.exe`, one `key = number` a line, `#`
-comments. It is read again whenever it changes, with the game running.
-
-| key       | default | meaning |
-|-----------|---------|---------|
-| `gamma`   | 1.5     | alpha = coverage^(1/gamma) |
-| `outline` | 0.25    | pixels added to the client's outline radius |
-| `v2`      | 1       | 0: the client's bitmaps for every font, as without the proxy |
-| `words`   | 1       | 0: magnified text reads the bands, not the texel words; 2: the words' path in colour |
-
-Environment variables:
-
-| variable               | meaning |
-|------------------------|---------|
-| `WOW_FONT_D3D9`        | `0`: forward only |
-| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll` |
-| `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
-| `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
 
 ## How it works
 
@@ -144,6 +170,9 @@ record on the next start (`src/cache.rs`, `src/record.rs`).
   client's.
 - Text drawn without a vs_3_0 vertex shader stays the client's.
 - A font whose file the proxy cannot find stays the client's.
+- Other mods that redraw the game's text (Lexara, TweakWoW2's HD Font,
+  awesome_wotlk's MSDF mode) take the same draws; use one at a time.
+  Nothing has been tried together with them.
 - Build 12340 only, as above.
 
 ## Cost
