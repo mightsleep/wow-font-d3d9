@@ -13,18 +13,18 @@
 #[allow(dead_code)]
 mod atlas;
 mod cache;
-mod draw;
-mod fontfile;
-#[allow(dead_code)]
-mod glyph;
 #[allow(dead_code)]
 mod coverage;
+mod draw;
+mod fontfile;
 mod fonts;
+#[allow(dead_code)]
+mod glyph;
 mod mem;
 mod mpq;
 mod payload;
-mod record;
 mod phi;
+mod record;
 mod settings;
 mod texture;
 mod trace;
@@ -55,9 +55,12 @@ pub(crate) fn exe_dir() -> &'static str {
     static D: OnceLock<String> = OnceLock::new();
     D.get_or_init(|| {
         let mut buf = [0u8; 260];
-        let n = unsafe { GetModuleFileNameA(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32) } as usize;
+        let n =
+            unsafe { GetModuleFileNameA(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32) }
+                as usize;
         let exe = String::from_utf8_lossy(&buf[..n.min(buf.len())]).into_owned();
-        exe.rfind('\\').map_or(String::new(), |i| exe[..i].to_string())
+        exe.rfind('\\')
+            .map_or(String::new(), |i| exe[..i].to_string())
     })
 }
 
@@ -86,7 +89,13 @@ fn write_log(msg: &str, wait: bool) {
     static F: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
     let f = F.get_or_init(|| {
         let path = beside_exe("wow-font-d3d9.log");
-        Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(path).ok())
+        Mutex::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok(),
+        )
     });
     // UTC time of day, to the millisecond: lines from different runs and
     // other tools line up.
@@ -223,6 +232,7 @@ pub unsafe extern "system" fn Direct3DCreate9Ex(sdk: u32, out: *mut Ptr) -> HRES
 macro_rules! forward {
     ($name:ident ( $($a:ident : $t:ty),* ) -> $r:ty = $default:expr) => {
         #[unsafe(no_mangle)]
+        #[allow(clippy::unused_unit)]
         pub unsafe extern "system" fn $name($($a: $t),*) -> $r {
             let f = real_fn(concat!(stringify!($name), "\0").as_bytes());
             if f.is_null() {
@@ -287,7 +297,9 @@ pub(crate) struct Class {
 
 impl Class {
     pub(crate) const fn new() -> Class {
-        Class { table: OnceLock::new() }
+        Class {
+            table: OnceLock::new(),
+        }
     }
 
     /// Point `obj` at the copy, made from the first object's vtable with
@@ -323,7 +335,11 @@ impl Class {
 
     /// Whether `obj` points at our copy.
     pub(crate) fn has(&self, obj: Ptr) -> bool {
-        !obj.is_null() && self.table.get().is_some_and(|t| unsafe { *(obj as *const usize) } == t.1)
+        !obj.is_null()
+            && self
+                .table
+                .get()
+                .is_some_and(|t| unsafe { *(obj as *const usize) } == t.1)
     }
 
     /// The class's own method `i`, read from its vtable at the call.
@@ -393,7 +409,11 @@ unsafe extern "system" fn create_device(
 }
 
 unsafe fn hook_device(dev: Ptr) {
-    let traced = if trace::init() { trace::hooks().to_vec() } else { Vec::new() };
+    let traced = if trace::init() {
+        trace::hooks().to_vec()
+    } else {
+        Vec::new()
+    };
     let hooks = [
         [(DEV_CREATE_TEXTURE, create_texture as *const () as usize)].as_slice(),
         &phi::hooks(),

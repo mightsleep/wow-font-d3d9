@@ -39,7 +39,12 @@ struct Rect {
     bottom: i32,
 }
 
-const FULL: Rect = Rect { left: 0, top: 0, right: 256, bottom: 256 };
+const FULL: Rect = Rect {
+    left: 0,
+    top: 0,
+    right: 256,
+    bottom: 256,
+};
 
 struct Cache {
     id: usize,
@@ -78,19 +83,34 @@ fn surf_orig(i: usize) -> usize {
 /// Hook a new glyph cache.
 pub fn hook(tex: Ptr, id: usize) {
     let hooks = [
-        (TEX_GET_SURFACE_LEVEL, get_surface_level as *const () as usize),
+        (
+            TEX_GET_SURFACE_LEVEL,
+            get_surface_level as *const () as usize,
+        ),
         (TEX_LOCK_RECT, tex_lock_rect as *const () as usize),
         (TEX_UNLOCK_RECT, tex_unlock_rect as *const () as usize),
     ];
     if !unsafe { TEX.adopt(tex, VTABLE, &hooks) } {
-        log(&format!("img{}: a texture of another class, left alone", id));
+        log(&format!(
+            "img{}: a texture of another class, left alone",
+            id
+        ));
         return;
     }
     crate::fonts::forget(tex as usize);
     crate::v2::forget(tex as usize);
     let mut s = state().lock().unwrap();
     s.surfaces.retain(|_, t| *t != tex as usize);
-    s.caches.insert(tex as usize, Cache { id, shadow: vec![0; 256 * 256], dirty: payload::Dirty::all(), lock: None, generation: crate::settings::generation() });
+    s.caches.insert(
+        tex as usize,
+        Cache {
+            id,
+            shadow: vec![0; 256 * 256],
+            dirty: payload::Dirty::all(),
+            lock: None,
+            generation: crate::settings::generation(),
+        },
+    );
 }
 
 /// A texture at this address is no glyph cache (any more).
@@ -110,7 +130,11 @@ fn begin(tex: usize, locked: *const LockedRect, rect: *const Rect) {
     if crate::enabled() {
         crate::fonts::identify(tex);
     }
-    let area = if rect.is_null() { FULL } else { unsafe { *rect } };
+    let area = if rect.is_null() {
+        FULL
+    } else {
+        unsafe { *rect }
+    };
     let l = unsafe { &*locked };
     if let Some(c) = state().lock().unwrap().caches.get_mut(&tex) {
         c.lock = Some((l.bits as usize, l.pitch, area));
@@ -121,8 +145,12 @@ fn begin(tex: usize, locked: *const LockedRect, rect: *const Rect) {
 /// the new shadow.
 fn end(tex: usize) {
     let mut s = state().lock().unwrap();
-    let Some(c) = s.caches.get_mut(&tex) else { return };
-    let Some((bits, pitch, a)) = c.lock.take() else { return };
+    let Some(c) = s.caches.get_mut(&tex) else {
+        return;
+    };
+    let Some((bits, pitch, a)) = c.lock.take() else {
+        return;
+    };
     for y in a.top.max(0)..a.bottom.min(256) {
         let row = (bits as isize + (y - a.top) as isize * pitch as isize) as *const u16;
         for x in a.left.max(0)..a.right.min(256) {
@@ -156,7 +184,13 @@ fn end(tex: usize) {
     }
 }
 
-unsafe extern "system" fn tex_lock_rect(this: Ptr, level: u32, locked: *mut LockedRect, rect: *const Rect, flags: u32) -> HRESULT {
+unsafe extern "system" fn tex_lock_rect(
+    this: Ptr,
+    level: u32,
+    locked: *mut LockedRect,
+    rect: *const Rect,
+    flags: u32,
+) -> HRESULT {
     let f: unsafe extern "system" fn(Ptr, u32, *mut LockedRect, *const Rect, u32) -> HRESULT =
         unsafe { std::mem::transmute(tex_orig(TEX_LOCK_RECT)) };
     let r = unsafe { f(this, level, locked, rect, flags) };
@@ -170,16 +204,28 @@ unsafe extern "system" fn tex_unlock_rect(this: Ptr, level: u32) -> HRESULT {
     if level == 0 {
         end(this as usize);
     }
-    let f: unsafe extern "system" fn(Ptr, u32) -> HRESULT = unsafe { std::mem::transmute(tex_orig(TEX_UNLOCK_RECT)) };
+    let f: unsafe extern "system" fn(Ptr, u32) -> HRESULT =
+        unsafe { std::mem::transmute(tex_orig(TEX_UNLOCK_RECT)) };
     unsafe { f(this, level) }
 }
 
-unsafe extern "system" fn surf_lock_rect(this: Ptr, locked: *mut LockedRect, rect: *const Rect, flags: u32) -> HRESULT {
+unsafe extern "system" fn surf_lock_rect(
+    this: Ptr,
+    locked: *mut LockedRect,
+    rect: *const Rect,
+    flags: u32,
+) -> HRESULT {
     let f: unsafe extern "system" fn(Ptr, *mut LockedRect, *const Rect, u32) -> HRESULT =
         unsafe { std::mem::transmute(surf_orig(SURF_LOCK_RECT)) };
     let r = unsafe { f(this, locked, rect, flags) };
-    let tex = state().lock().unwrap().surfaces.get(&(this as usize)).copied();
-    if r >= 0 && !locked.is_null()
+    let tex = state()
+        .lock()
+        .unwrap()
+        .surfaces
+        .get(&(this as usize))
+        .copied();
+    if r >= 0
+        && !locked.is_null()
         && let Some(tex) = tex
     {
         begin(tex, locked, rect);
@@ -188,18 +234,25 @@ unsafe extern "system" fn surf_lock_rect(this: Ptr, locked: *mut LockedRect, rec
 }
 
 unsafe extern "system" fn surf_unlock_rect(this: Ptr) -> HRESULT {
-    let tex = state().lock().unwrap().surfaces.get(&(this as usize)).copied();
+    let tex = state()
+        .lock()
+        .unwrap()
+        .surfaces
+        .get(&(this as usize))
+        .copied();
     if let Some(tex) = tex {
         end(tex);
     }
-    let f: unsafe extern "system" fn(Ptr) -> HRESULT = unsafe { std::mem::transmute(surf_orig(SURF_UNLOCK_RECT)) };
+    let f: unsafe extern "system" fn(Ptr) -> HRESULT =
+        unsafe { std::mem::transmute(surf_orig(SURF_UNLOCK_RECT)) };
     unsafe { f(this) }
 }
 
 /// The client locks through the level 0 surface: hook it and remember whose
 /// it is.
 unsafe extern "system" fn get_surface_level(this: Ptr, level: u32, out: *mut Ptr) -> HRESULT {
-    let f: unsafe extern "system" fn(Ptr, u32, *mut Ptr) -> HRESULT = unsafe { std::mem::transmute(tex_orig(TEX_GET_SURFACE_LEVEL)) };
+    let f: unsafe extern "system" fn(Ptr, u32, *mut Ptr) -> HRESULT =
+        unsafe { std::mem::transmute(tex_orig(TEX_GET_SURFACE_LEVEL)) };
     let r = unsafe { f(this, level, out) };
     if r < 0 || level != 0 || out.is_null() || unsafe { (*out).is_null() } {
         return r;
@@ -207,7 +260,9 @@ unsafe extern "system" fn get_surface_level(this: Ptr, level: u32, out: *mut Ptr
     let surf = unsafe { *out };
     let id = {
         let mut s = state().lock().unwrap();
-        let Some(id) = s.caches.get(&(this as usize)).map(|c| c.id) else { return r };
+        let Some(id) = s.caches.get(&(this as usize)).map(|c| c.id) else {
+            return r;
+        };
         // Known only if it is this texture's and still ours: a freed cache's
         // surface stays in the map until its texture's address comes back,
         // and a new cache's surface at that address went unhooked, its
@@ -218,24 +273,44 @@ unsafe extern "system" fn get_surface_level(this: Ptr, level: u32, out: *mut Ptr
         }
         id
     };
-    let hooks = [(SURF_LOCK_RECT, surf_lock_rect as *const () as usize), (SURF_UNLOCK_RECT, surf_unlock_rect as *const () as usize)];
+    let hooks = [
+        (SURF_LOCK_RECT, surf_lock_rect as *const () as usize),
+        (SURF_UNLOCK_RECT, surf_unlock_rect as *const () as usize),
+    ];
     if !unsafe { SURF.adopt(surf, VTABLE, &hooks) } {
-        log(&format!("img{}: a surface of another class, left alone", id));
+        log(&format!(
+            "img{}: a surface of another class, left alone",
+            id
+        ));
         return r;
     }
-    log(&format!("img{} level 0 surface {:#x} hooked", id, surf as usize));
+    log(&format!(
+        "img{} level 0 surface {:#x} hooked",
+        id, surf as usize
+    ));
     r
 }
 
 /// Every glyph cache: (texture, id).
 pub fn ids() -> Vec<(usize, usize)> {
-    state().lock().unwrap().caches.iter().map(|(&t, c)| (t, c.id)).collect()
+    state()
+        .lock()
+        .unwrap()
+        .caches
+        .iter()
+        .map(|(&t, c)| (t, c.id))
+        .collect()
 }
 
 /// Whether `tex` got our cells only before the last change of a setting
 /// they depend on.
 pub fn stale(tex: usize) -> bool {
-    state().lock().unwrap().caches.get(&tex).is_some_and(|c| c.generation != crate::settings::generation())
+    state()
+        .lock()
+        .unwrap()
+        .caches
+        .get(&tex)
+        .is_some_and(|c| c.generation != crate::settings::generation())
 }
 
 /// Put `tex`'s cells into v2 from the client's last upload (the shadow,
@@ -244,12 +319,25 @@ pub fn stale(tex: usize) -> bool {
 /// new glyph comes) or after a setting changed.
 pub fn refresh(tex: usize) {
     let _trace = crate::trace::span(crate::trace::Kind::Refresh);
-    let Some(header) = crate::fonts::owners().lock().unwrap().get(&tex).map(|o| o.header) else { return };
+    let Some(header) = crate::fonts::owners()
+        .lock()
+        .unwrap()
+        .get(&tex)
+        .map(|o| o.header)
+    else {
+        return;
+    };
     let (id, shadow, dirty) = {
         let mut s = state().lock().unwrap();
-        let Some(c) = s.caches.get_mut(&tex) else { return };
+        let Some(c) = s.caches.get_mut(&tex) else {
+            return;
+        };
         c.generation = crate::settings::generation();
-        (c.id, c.shadow.clone(), std::mem::replace(&mut c.dirty, payload::Dirty::none()))
+        (
+            c.id,
+            c.shadow.clone(),
+            std::mem::replace(&mut c.dirty, payload::Dirty::none()),
+        )
     };
     payload::tried(tex, header);
     let (written, summary) = payload::write(tex, &shadow, &dirty);

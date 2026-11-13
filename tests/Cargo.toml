@@ -17,3 +17,8 @@ ttf-parser = "0.25.1"
 
 [profile.test]
 opt-level = 3
+
+# As the DLL's (../Cargo.toml).
+[lints.clippy]
+type_complexity = "allow"
+needless_range_loop = "allow"

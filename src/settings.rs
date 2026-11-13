@@ -105,9 +105,11 @@ pub fn watch() {
         }
     };
     check();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(250));
-        crate::fontfile::tidy();
-        check();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            crate::fontfile::tidy();
+            check();
+        }
     });
 }

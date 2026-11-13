@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::fontfile::FontData;
@@ -208,8 +208,10 @@ pub fn get(p: &Params, k: Key) -> Option<Option<Arc<[u16]>>> {
         let words = b.data.as_ref()?.get(at..at + 2 * n)?;
         Some(Some(
             words
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&c| u16::from_le_bytes(c))
                 .collect(),
         ))
     })

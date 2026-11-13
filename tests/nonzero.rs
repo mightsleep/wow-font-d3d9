@@ -18,15 +18,35 @@ fn overlaps_count_once_and_holes_not_at_all() {
     let (a, b) = ([1.3, 2.25, 9.6, 7.5], [4.75, 0.6, 12.2, 10.1]);
     let (w, h) = (14, 12);
     for same in [true, false] {
-        let lines = polylines(&[rect(a[0], a[1], a[2], a[3], false), rect(b[0], b[1], b[2], b[3], !same)]);
+        let lines = polylines(&[
+            rect(a[0], a[1], a[2], a[3], false),
+            rect(b[0], b[1], b[2], b[3], !same),
+        ]);
         let cov = coverage(&lines, w, h);
-        let both = [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])];
+        let both = [
+            a[0].max(b[0]),
+            a[1].max(b[1]),
+            a[2].min(b[2]),
+            a[3].min(b[3]),
+        ];
         for ty in 0..h {
             for tx in 0..w {
-                let (oa, ob, o) = (overlap(a, tx, ty), overlap(b, tx, ty), overlap(both, tx, ty));
+                let (oa, ob, o) = (
+                    overlap(a, tx, ty),
+                    overlap(b, tx, ty),
+                    overlap(both, tx, ty),
+                );
                 let want = if same { oa + ob - o } else { oa + ob - 2.0 * o };
                 let got = cov[(ty * w + tx) as usize];
-                assert!((got - want).abs() < 1e-5, "same {} texel ({}, {}): {} want {}", same, tx, ty, got, want);
+                assert!(
+                    (got - want).abs() < 1e-5,
+                    "same {} texel ({}, {}): {} want {}",
+                    same,
+                    tx,
+                    ty,
+                    got,
+                    want
+                );
             }
         }
     }
@@ -55,7 +75,9 @@ fn matches_sampled_nonzero() {
                     let mut wn = 0;
                     for &(a, b) in &segs {
                         let (ay, by) = (a[1] as f64, b[1] as f64);
-                        if (ay <= y) != (by <= y) && a[0] as f64 + (y - ay) / (by - ay) * (b[0] - a[0]) as f64 > x {
+                        if (ay <= y) != (by <= y)
+                            && a[0] as f64 + (y - ay) / (by - ay) * (b[0] - a[0]) as f64 > x
+                        {
                             wn += if by > ay { 1 } else { -1 };
                         }
                     }

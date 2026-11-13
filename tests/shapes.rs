@@ -5,7 +5,7 @@ use crate::glyph::{P, Quad};
 
 /// A rectangle as lines, counter-clockwise in y-down cell space or not.
 pub fn rect(x0: f32, y0: f32, x1: f32, y1: f32, ccw: bool) -> Vec<Quad> {
-    let mut p = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    let mut p = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     if ccw {
         p.reverse();
     }
@@ -26,7 +26,10 @@ impl Rng {
 
     /// Uniform in [lo, hi).
     pub fn f(&mut self, lo: f32, hi: f32) -> f32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         lo + (hi - lo) * ((self.0 >> 40) as f32 / (1u64 << 24) as f32)
     }
 }

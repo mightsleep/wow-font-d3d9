@@ -46,11 +46,7 @@ const HASH_KEY: u32 = 3;
 /// 'a'..='z' (c - 'a' < 26 as an unsigned compare); '/' becomes '\'.
 fn storm_char(c: u8) -> u8 {
     let up = c - (((c.wrapping_sub(b'a') < 26) as u8) << 5);
-    if up == b'/' {
-        b'\\'
-    } else {
-        up
-    }
+    if up == b'/' { b'\\' } else { up }
 }
 
 fn hash(name: &str, kind: u32) -> u32 {
@@ -72,9 +68,9 @@ fn hash(name: &str, kind: u32) -> u32 {
 fn decrypt(data: &mut [u8], mut key: u32) {
     let t = crypt_table();
     let mut seed = 0xEEEE_EEEEu32;
-    for w in data.chunks_exact_mut(4) {
+    for w in data.as_chunks_mut::<4>().0 {
         seed = seed.wrapping_add(t[0x400 + (key & 0xFF) as usize]);
-        let v = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) ^ key.wrapping_add(seed);
+        let v = u32::from_le_bytes(*w) ^ key.wrapping_add(seed);
         key = ((!key << 21).wrapping_add(0x1111_1111)) | (key >> 11);
         seed = v.wrapping_add(seed).wrapping_add(seed << 5).wrapping_add(3);
         w.copy_from_slice(&v.to_le_bytes());
@@ -108,8 +104,7 @@ pub struct Archive {
 }
 
 fn words(b: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    b.chunks_exact(4)
-        .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+    b.as_chunks::<4>().0.iter().map(|&w| u32::from_le_bytes(w))
 }
 
 impl Archive {
@@ -156,12 +151,14 @@ impl Archive {
         };
         let ht = table(hpos, hcount, "(hash table)")?;
         let bt = table(bpos, bcount, "(block table)")?;
-        let hashes = ht.chunks_exact(16).map(|e| {
+        let hashes = ht.as_chunks::<16>().0.iter().map(|e| {
             let v: Vec<u32> = words(e).collect();
             (v[0], v[1], v[3])
         });
         let mut blocks: Vec<Block> = bt
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|e| {
                 let v: Vec<u32> = words(e).collect();
                 Block {
@@ -178,8 +175,8 @@ impl Archive {
             f.seek(SeekFrom::Start(base + hi_block))
                 .map_err(|e| e.to_string())?;
             f.read_exact(&mut b).map_err(|e| e.to_string())?;
-            for (blk, hi) in blocks.iter_mut().zip(b.chunks_exact(2)) {
-                blk.pos |= (u16::from_le_bytes([hi[0], hi[1]]) as u64) << 32;
+            for (blk, hi) in blocks.iter_mut().zip(b.as_chunks::<2>().0) {
+                blk.pos |= (u16::from_le_bytes(*hi) as u64) << 32;
             }
         }
         Ok(Archive {
@@ -371,7 +368,7 @@ impl Chain {
                 }
             }
         }
-        archives.sort_by(|a, b| b.0.cmp(&a.0));
+        archives.sort_by_key(|a| std::cmp::Reverse(a.0));
         (Chain { archives }, failed)
     }
 

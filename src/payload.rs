@@ -6,7 +6,7 @@
 
 use std::sync::Mutex;
 
-use crate::cache::{self, fx_map, FxMap};
+use crate::cache::{self, FxMap, fx_map};
 use crate::glyph::Placement;
 use crate::{fontfile, fonts, log, mem, settings};
 

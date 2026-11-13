@@ -11,7 +11,7 @@
 //!              y, the low 4 bits of all six in the fourth float
 //!   ring       every piece in outline order, twice (texel_words)
 
-use crate::glyph::{Quad, P};
+use crate::glyph::{P, Quad};
 
 /// Grid steps across the outline's larger side: 16-bit coordinates.
 pub const GRID: f32 = 65536.0;
@@ -108,7 +108,7 @@ pub fn encode(contours: &[Vec<Quad>], scale: Option<f32>, outline: bool) -> Opti
         }
     }
     let side = (hi[0] - lo[0]).max(hi[1] - lo[1]);
-    if !(side > 0.0) {
+    if side.is_nan() || side <= 0.0 {
         return None;
     }
     let scale = scale.unwrap_or((GRID - 1.0) / side);

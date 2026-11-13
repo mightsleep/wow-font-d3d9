@@ -12,18 +12,22 @@
 //!
 //!   bench.exe --out DIR --ps NAME=FILE.ps3 ... --font FILE:PX:OUTLINE ...
 //!             [--scales 0.5,1,1.5,2] [--reps 10] [--rounds 7] [--no-time]
-//!             [--pages 3,7] [--chars TEXT]
+//!             [--pages 3,7] [--chars TEXT] [--max-gross 1:0.05,2:0.25]
+//!
+//! --max-gross SCALE:PCT,... makes it a test: exit 1 when a shader has
+//! more than PCT % of its text texels off the reference by over 16/255
+//! at that scale (`nix run .#gate`, in CI).
 
 #![allow(non_snake_case)]
 
-#[path = "../src/glyph.rs"]
-mod glyph;
 #[allow(dead_code)]
 #[path = "../src/atlas.rs"]
 mod atlas;
 #[allow(dead_code)]
 #[path = "../src/coverage.rs"]
 mod coverage;
+#[path = "../src/glyph.rs"]
+mod glyph;
 
 use std::ffi::c_void;
 use std::fmt::Write as _;
@@ -191,8 +195,15 @@ impl Device {
                 interval: 0x8000_0000, // immediate
             };
             let mut dev: Ptr = std::ptr::null_mut();
-            let f: unsafe extern "system" fn(Ptr, u32, u32, Ptr, u32, *mut PresentParams, *mut Ptr) -> HRESULT =
-                m(d3d, D3D_CREATE_DEVICE);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                Ptr,
+                u32,
+                *mut PresentParams,
+                *mut Ptr,
+            ) -> HRESULT = m(d3d, D3D_CREATE_DEVICE);
             // Hardware vertex processing.
             ok(f(d3d, 0, 1, wnd, 0x40, &mut pp, &mut dev), "CreateDevice");
             Device(dev)
@@ -201,13 +212,44 @@ impl Device {
 
     fn create_texture(&self, words: &[u16]) -> Ptr {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, u32, u32, *mut Ptr, Ptr) -> HRESULT =
-                m(self.0, DEV_CREATE_TEXTURE);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                *mut Ptr,
+                Ptr,
+            ) -> HRESULT = m(self.0, DEV_CREATE_TEXTURE);
             let mut tex: Ptr = std::ptr::null_mut();
-            ok(f(self.0, 256, 256, 1, 0, FMT_A4R4G4B4, POOL_MANAGED, &mut tex, std::ptr::null_mut()), "CreateTexture");
-            let lock: unsafe extern "system" fn(Ptr, u32, *mut Locked, *const c_void, u32) -> HRESULT = m(tex, TEX_LOCK_RECT);
+            ok(
+                f(
+                    self.0,
+                    256,
+                    256,
+                    1,
+                    0,
+                    FMT_A4R4G4B4,
+                    POOL_MANAGED,
+                    &mut tex,
+                    std::ptr::null_mut(),
+                ),
+                "CreateTexture",
+            );
+            let lock: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                *mut Locked,
+                *const c_void,
+                u32,
+            ) -> HRESULT = m(tex, TEX_LOCK_RECT);
             let unlock: unsafe extern "system" fn(Ptr, u32) -> HRESULT = m(tex, TEX_UNLOCK_RECT);
-            let mut l = Locked { pitch: 0, bits: std::ptr::null_mut() };
+            let mut l = Locked {
+                pitch: 0,
+                bits: std::ptr::null_mut(),
+            };
             ok(lock(tex, 0, &mut l, std::ptr::null(), 0), "LockRect");
             for y in 0..256 {
                 let row = l.bits.offset(y as isize * l.pitch as isize) as *mut u16;
@@ -222,14 +264,45 @@ impl Device {
     /// byte a texel, A8L8 (L first) at two.
     fn create_texture_u8(&self, bytes: &[u8], per: usize) -> Ptr {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, u32, u32, *mut Ptr, Ptr) -> HRESULT =
-                m(self.0, DEV_CREATE_TEXTURE);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                *mut Ptr,
+                Ptr,
+            ) -> HRESULT = m(self.0, DEV_CREATE_TEXTURE);
             let mut tex: Ptr = std::ptr::null_mut();
             let format = if per == 2 { FMT_A8L8 } else { FMT_L8 };
-            ok(f(self.0, 256, 256, 1, 0, format, POOL_MANAGED, &mut tex, std::ptr::null_mut()), "CreateTexture (cover)");
-            let lock: unsafe extern "system" fn(Ptr, u32, *mut Locked, *const c_void, u32) -> HRESULT = m(tex, TEX_LOCK_RECT);
+            ok(
+                f(
+                    self.0,
+                    256,
+                    256,
+                    1,
+                    0,
+                    format,
+                    POOL_MANAGED,
+                    &mut tex,
+                    std::ptr::null_mut(),
+                ),
+                "CreateTexture (cover)",
+            );
+            let lock: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                *mut Locked,
+                *const c_void,
+                u32,
+            ) -> HRESULT = m(tex, TEX_LOCK_RECT);
             let unlock: unsafe extern "system" fn(Ptr, u32) -> HRESULT = m(tex, TEX_UNLOCK_RECT);
-            let mut l = Locked { pitch: 0, bits: std::ptr::null_mut() };
+            let mut l = Locked {
+                pitch: 0,
+                bits: std::ptr::null_mut(),
+            };
             ok(lock(tex, 0, &mut l, std::ptr::null(), 0), "LockRect (L8)");
             for y in 0..256 {
                 let row = l.bits.offset(y as isize * l.pitch as isize);
@@ -243,14 +316,48 @@ impl Device {
     /// The texel words (stage 4), A16B16G16R16, managed, row by row.
     fn create_texture_u16x4(&self, words: &[[u16; 4]]) -> Ptr {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, u32, u32, *mut Ptr, Ptr) -> HRESULT =
-                m(self.0, DEV_CREATE_TEXTURE);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                *mut Ptr,
+                Ptr,
+            ) -> HRESULT = m(self.0, DEV_CREATE_TEXTURE);
             let mut tex: Ptr = std::ptr::null_mut();
-            ok(f(self.0, 256, 256, 1, 0, FMT_A16B16G16R16, POOL_MANAGED, &mut tex, std::ptr::null_mut()), "CreateTexture (words)");
-            let lock: unsafe extern "system" fn(Ptr, u32, *mut Locked, *const c_void, u32) -> HRESULT = m(tex, TEX_LOCK_RECT);
+            ok(
+                f(
+                    self.0,
+                    256,
+                    256,
+                    1,
+                    0,
+                    FMT_A16B16G16R16,
+                    POOL_MANAGED,
+                    &mut tex,
+                    std::ptr::null_mut(),
+                ),
+                "CreateTexture (words)",
+            );
+            let lock: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                *mut Locked,
+                *const c_void,
+                u32,
+            ) -> HRESULT = m(tex, TEX_LOCK_RECT);
             let unlock: unsafe extern "system" fn(Ptr, u32) -> HRESULT = m(tex, TEX_UNLOCK_RECT);
-            let mut l = Locked { pitch: 0, bits: std::ptr::null_mut() };
-            ok(lock(tex, 0, &mut l, std::ptr::null(), 0), "LockRect (words)");
+            let mut l = Locked {
+                pitch: 0,
+                bits: std::ptr::null_mut(),
+            };
+            ok(
+                lock(tex, 0, &mut l, std::ptr::null(), 0),
+                "LockRect (words)",
+            );
             for y in 0..256 {
                 // D3D's A16B16G16R16 is R first in memory: x, y, z, w.
                 let row = l.bits.offset(y as isize * l.pitch as isize) as *mut [u16; 4];
@@ -264,13 +371,44 @@ impl Device {
     /// A w x h A32B32G32R32F texture, managed, from texels row by row.
     fn create_texture_f32(&self, w: u32, h: u32, texels: &[[f32; 4]]) -> Ptr {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, u32, u32, *mut Ptr, Ptr) -> HRESULT =
-                m(self.0, DEV_CREATE_TEXTURE);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                *mut Ptr,
+                Ptr,
+            ) -> HRESULT = m(self.0, DEV_CREATE_TEXTURE);
             let mut tex: Ptr = std::ptr::null_mut();
-            ok(f(self.0, w, h, 1, 0, FMT_A32B32G32R32F, POOL_MANAGED, &mut tex, std::ptr::null_mut()), "CreateTexture (f32)");
-            let lock: unsafe extern "system" fn(Ptr, u32, *mut Locked, *const c_void, u32) -> HRESULT = m(tex, TEX_LOCK_RECT);
+            ok(
+                f(
+                    self.0,
+                    w,
+                    h,
+                    1,
+                    0,
+                    FMT_A32B32G32R32F,
+                    POOL_MANAGED,
+                    &mut tex,
+                    std::ptr::null_mut(),
+                ),
+                "CreateTexture (f32)",
+            );
+            let lock: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                *mut Locked,
+                *const c_void,
+                u32,
+            ) -> HRESULT = m(tex, TEX_LOCK_RECT);
             let unlock: unsafe extern "system" fn(Ptr, u32) -> HRESULT = m(tex, TEX_UNLOCK_RECT);
-            let mut l = Locked { pitch: 0, bits: std::ptr::null_mut() };
+            let mut l = Locked {
+                pitch: 0,
+                bits: std::ptr::null_mut(),
+            };
             ok(lock(tex, 0, &mut l, std::ptr::null(), 0), "LockRect (f32)");
             for y in 0..h as usize {
                 let row = l.bits.offset(y as isize * l.pitch as isize) as *mut [f32; 4];
@@ -283,15 +421,49 @@ impl Device {
 
     fn render_target(&self, size: u32) -> (Ptr, Ptr) {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, u32, i32, *mut Ptr, Ptr) -> HRESULT =
-                m(self.0, DEV_CREATE_RENDER_TARGET);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                u32,
+                u32,
+                u32,
+                u32,
+                i32,
+                *mut Ptr,
+                Ptr,
+            ) -> HRESULT = m(self.0, DEV_CREATE_RENDER_TARGET);
             let mut rt: Ptr = std::ptr::null_mut();
-            ok(f(self.0, size, size, FMT_A32B32G32R32F, 0, 0, 0, &mut rt, std::ptr::null_mut()), "CreateRenderTarget");
+            ok(
+                f(
+                    self.0,
+                    size,
+                    size,
+                    FMT_A32B32G32R32F,
+                    0,
+                    0,
+                    0,
+                    &mut rt,
+                    std::ptr::null_mut(),
+                ),
+                "CreateRenderTarget",
+            );
             let f: unsafe extern "system" fn(Ptr, u32, u32, u32, u32, *mut Ptr, Ptr) -> HRESULT =
                 m(self.0, DEV_CREATE_OFFSCREEN_PLAIN_SURFACE);
             let mut sys: Ptr = std::ptr::null_mut();
-            ok(f(self.0, size, size, FMT_A32B32G32R32F, POOL_SYSTEMMEM, &mut sys, std::ptr::null_mut()), "CreateOffscreenPlainSurface");
-            let f: unsafe extern "system" fn(Ptr, u32, Ptr) -> HRESULT = m(self.0, DEV_SET_RENDER_TARGET);
+            ok(
+                f(
+                    self.0,
+                    size,
+                    size,
+                    FMT_A32B32G32R32F,
+                    POOL_SYSTEMMEM,
+                    &mut sys,
+                    std::ptr::null_mut(),
+                ),
+                "CreateOffscreenPlainSurface",
+            );
+            let f: unsafe extern "system" fn(Ptr, u32, Ptr) -> HRESULT =
+                m(self.0, DEV_SET_RENDER_TARGET);
             ok(f(self.0, 0, rt), "SetRenderTarget");
             (rt, sys)
         }
@@ -300,11 +472,16 @@ impl Device {
     /// The render target's texels, RGBA f32, `size` square.
     fn read(&self, rt: Ptr, sys: Ptr, size: u32) -> Vec<[f32; 4]> {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, Ptr, Ptr) -> HRESULT = m(self.0, DEV_GET_RENDER_TARGET_DATA);
+            let f: unsafe extern "system" fn(Ptr, Ptr, Ptr) -> HRESULT =
+                m(self.0, DEV_GET_RENDER_TARGET_DATA);
             ok(f(self.0, rt, sys), "GetRenderTargetData");
-            let lock: unsafe extern "system" fn(Ptr, *mut Locked, *const c_void, u32) -> HRESULT = m(sys, SURF_LOCK_RECT);
+            let lock: unsafe extern "system" fn(Ptr, *mut Locked, *const c_void, u32) -> HRESULT =
+                m(sys, SURF_LOCK_RECT);
             let unlock: unsafe extern "system" fn(Ptr) -> HRESULT = m(sys, SURF_UNLOCK_RECT);
-            let mut l = Locked { pitch: 0, bits: std::ptr::null_mut() };
+            let mut l = Locked {
+                pitch: 0,
+                bits: std::ptr::null_mut(),
+            };
             ok(lock(sys, &mut l, std::ptr::null(), 0x10), "LockRect (read)");
             let n = size as usize;
             let mut out = vec![[0f32; 4]; n * n];
@@ -318,9 +495,13 @@ impl Device {
     }
 
     fn pixel_shader(&self, code: &[u8]) -> Ptr {
-        let words: Vec<u32> = code.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let words: Vec<u32> = code
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, *const u32, *mut Ptr) -> HRESULT = m(self.0, DEV_CREATE_PIXEL_SHADER);
+            let f: unsafe extern "system" fn(Ptr, *const u32, *mut Ptr) -> HRESULT =
+                m(self.0, DEV_CREATE_PIXEL_SHADER);
             let mut ps: Ptr = std::ptr::null_mut();
             ok(f(self.0, words.as_ptr(), &mut ps), "CreatePixelShader");
             ps
@@ -332,29 +513,41 @@ impl Device {
     /// texel centres, the client's bitmap path would filter).
     fn fixed_state(&self) {
         unsafe {
-            let words: Vec<u32> = VS.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-            let f: unsafe extern "system" fn(Ptr, *const u32, *mut Ptr) -> HRESULT = m(self.0, DEV_CREATE_VERTEX_SHADER);
+            let words: Vec<u32> = VS
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            let f: unsafe extern "system" fn(Ptr, *const u32, *mut Ptr) -> HRESULT =
+                m(self.0, DEV_CREATE_VERTEX_SHADER);
             let mut vs: Ptr = std::ptr::null_mut();
             ok(f(self.0, words.as_ptr(), &mut vs), "CreateVertexShader");
-            let f: unsafe extern "system" fn(Ptr, Ptr) -> HRESULT = m(self.0, DEV_SET_VERTEX_SHADER);
+            let f: unsafe extern "system" fn(Ptr, Ptr) -> HRESULT =
+                m(self.0, DEV_SET_VERTEX_SHADER);
             ok(f(self.0, vs), "SetVertexShader");
             // D3DVERTEXELEMENT9: stream, offset, type, method, usage, index.
             let decl: [[u16; 4]; 4] = [
-                el(0, 0, 3, 0, 0),  // FLOAT4 POSITION
-                el(0, 16, 4, 10, 0), // D3DCOLOR COLOR0
-                el(0, 20, 1, 5, 0), // FLOAT2 TEXCOORD0
+                el(0, 0, 3, 0, 0),     // FLOAT4 POSITION
+                el(0, 16, 4, 10, 0),   // D3DCOLOR COLOR0
+                el(0, 20, 1, 5, 0),    // FLOAT2 TEXCOORD0
                 el(0xFF, 0, 17, 0, 0), // D3DDECL_END
             ];
-            let f: unsafe extern "system" fn(Ptr, *const c_void, *mut Ptr) -> HRESULT = m(self.0, DEV_CREATE_VERTEX_DECLARATION);
+            let f: unsafe extern "system" fn(Ptr, *const c_void, *mut Ptr) -> HRESULT =
+                m(self.0, DEV_CREATE_VERTEX_DECLARATION);
             let mut d: Ptr = std::ptr::null_mut();
-            ok(f(self.0, decl.as_ptr() as *const c_void, &mut d), "CreateVertexDeclaration");
-            let f: unsafe extern "system" fn(Ptr, Ptr) -> HRESULT = m(self.0, DEV_SET_VERTEX_DECLARATION);
+            ok(
+                f(self.0, decl.as_ptr() as *const c_void, &mut d),
+                "CreateVertexDeclaration",
+            );
+            let f: unsafe extern "system" fn(Ptr, Ptr) -> HRESULT =
+                m(self.0, DEV_SET_VERTEX_DECLARATION);
             ok(f(self.0, d), "SetVertexDeclaration");
-            let rs: unsafe extern "system" fn(Ptr, u32, u32) -> HRESULT = m(self.0, DEV_SET_RENDER_STATE);
+            let rs: unsafe extern "system" fn(Ptr, u32, u32) -> HRESULT =
+                m(self.0, DEV_SET_RENDER_STATE);
             for (state, value) in [(7, 0), (14, 0), (15, 0), (22, 1), (27, 0)] {
                 rs(self.0, state, value);
             }
-            let ss: unsafe extern "system" fn(Ptr, u32, u32, u32) -> HRESULT = m(self.0, DEV_SET_SAMPLER_STATE);
+            let ss: unsafe extern "system" fn(Ptr, u32, u32, u32) -> HRESULT =
+                m(self.0, DEV_SET_SAMPLER_STATE);
             // The glyph cache, then format v2's column map and atlas (float
             // textures: point sampling, which they need on older hardware).
             for stage in 0..5 {
@@ -372,66 +565,85 @@ impl Device {
         }
     }
 
-/// A page with the decoder's constants, as phi sets them.
-fn draw_page(&self, page: &Page, cache: &Cache) {
-    unsafe {
-        let f: unsafe extern "system" fn(Ptr, u32, Ptr) -> HRESULT = m(self.0, DEV_SET_TEXTURE);
-        f(self.0, 0, cache.texture);
-        f(self.0, 1, cache.map);
-        f(self.0, 2, cache.atlas);
-        f(self.0, 3, cache.cover);
-        f(self.0, 4, cache.words);
-        // c202 the atlas and the scale, c203 the column map's height.
-        let atl = [256.0f32, 1.0 / 256.0, 1.0 / cache.atlas_h as f32, cache.k, 1.0 / 256.0, 0.0, 0.0, 0.0];
-        let fc: unsafe extern "system" fn(Ptr, u32, *const f32, u32) -> HRESULT =
-            m(self.0, DEV_SET_PS_CONSTANT_F);
-        fc(self.0, CFG + 2, atl.as_ptr(), 2);
-        let ch = cache.cell_height as f32;
-        let cfg = [
-            ch,
-            1.0 / ch,
-            1.0 / GAMMA,
-            0.0,
-            cache.edge,
-            0.0,
-            0.0,
-            0.0,
-        ];
-        let f: unsafe extern "system" fn(Ptr, u32, *const f32, u32) -> HRESULT =
-            m(self.0, DEV_SET_PS_CONSTANT_F);
-        f(self.0, CFG, cfg.as_ptr(), 2);
-        let f: unsafe extern "system" fn(Ptr, u32, u32, *const c_void, u32) -> HRESULT =
-            m(self.0, DEV_DRAW_PRIMITIVE_UP);
-        ok(
-            f(
-                self.0,
-                4,
-                (page.verts.len() / 3) as u32,
-                page.verts.as_ptr() as *const c_void,
-                size_of::<Vertex>() as u32,
-            ),
-            "DrawPrimitiveUP",
-        );
+    /// A page with the decoder's constants, as phi sets them.
+    fn draw_page(&self, page: &Page, cache: &Cache) {
+        unsafe {
+            let f: unsafe extern "system" fn(Ptr, u32, Ptr) -> HRESULT = m(self.0, DEV_SET_TEXTURE);
+            f(self.0, 0, cache.texture);
+            f(self.0, 1, cache.map);
+            f(self.0, 2, cache.atlas);
+            f(self.0, 3, cache.cover);
+            f(self.0, 4, cache.words);
+            // c202 the atlas and the scale, c203 the column map's height.
+            let atl = [
+                256.0f32,
+                1.0 / 256.0,
+                1.0 / cache.atlas_h as f32,
+                cache.k,
+                1.0 / 256.0,
+                0.0,
+                0.0,
+                0.0,
+            ];
+            let fc: unsafe extern "system" fn(Ptr, u32, *const f32, u32) -> HRESULT =
+                m(self.0, DEV_SET_PS_CONSTANT_F);
+            fc(self.0, CFG + 2, atl.as_ptr(), 2);
+            let ch = cache.cell_height as f32;
+            let cfg = [ch, 1.0 / ch, 1.0 / GAMMA, 0.0, cache.edge, 0.0, 0.0, 0.0];
+            let f: unsafe extern "system" fn(Ptr, u32, *const f32, u32) -> HRESULT =
+                m(self.0, DEV_SET_PS_CONSTANT_F);
+            f(self.0, CFG, cfg.as_ptr(), 2);
+            let f: unsafe extern "system" fn(Ptr, u32, u32, *const c_void, u32) -> HRESULT =
+                m(self.0, DEV_DRAW_PRIMITIVE_UP);
+            ok(
+                f(
+                    self.0,
+                    4,
+                    (page.verts.len() / 3) as u32,
+                    page.verts.as_ptr() as *const c_void,
+                    size_of::<Vertex>() as u32,
+                ),
+                "DrawPrimitiveUP",
+            );
+        }
     }
-}
     fn scene(&self, begin: bool) {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr) -> HRESULT = m(self.0, if begin { DEV_BEGIN_SCENE } else { DEV_END_SCENE });
+            let f: unsafe extern "system" fn(Ptr) -> HRESULT = m(
+                self.0,
+                if begin {
+                    DEV_BEGIN_SCENE
+                } else {
+                    DEV_END_SCENE
+                },
+            );
             f(self.0);
         }
     }
 
     fn clear(&self) {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, *const c_void, u32, u32, f32, u32) -> HRESULT = m(self.0, DEV_CLEAR);
+            let f: unsafe extern "system" fn(
+                Ptr,
+                u32,
+                *const c_void,
+                u32,
+                u32,
+                f32,
+                u32,
+            ) -> HRESULT = m(self.0, DEV_CLEAR);
             // Colour only, to a value no shader writes.
-            ok(f(self.0, 0, std::ptr::null(), 1, 0x00FF_00FF, 1.0, 0), "Clear");
+            ok(
+                f(self.0, 0, std::ptr::null(), 1, 0x00FF_00FF, 1.0, 0),
+                "Clear",
+            );
         }
     }
 
     fn query(&self, ty: u32) -> Ptr {
         unsafe {
-            let f: unsafe extern "system" fn(Ptr, u32, *mut Ptr) -> HRESULT = m(self.0, DEV_CREATE_QUERY);
+            let f: unsafe extern "system" fn(Ptr, u32, *mut Ptr) -> HRESULT =
+                m(self.0, DEV_CREATE_QUERY);
             let mut q: Ptr = std::ptr::null_mut();
             ok(f(self.0, ty, &mut q), "CreateQuery");
             q
@@ -440,7 +652,12 @@ fn draw_page(&self, page: &Page, cache: &Cache) {
 }
 
 fn el(stream: u16, offset: u16, ty: u8, usage: u8, index: u8) -> [u16; 4] {
-    [stream, offset, ty as u16, usage as u16 | (index as u16) << 8]
+    [
+        stream,
+        offset,
+        ty as u16,
+        usage as u16 | (index as u16) << 8,
+    ]
 }
 
 fn issue(q: Ptr, flags: u32) {
@@ -527,14 +744,27 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
     let (mut records, mut map) = (Vec::<[f32; 4]>::new(), vec![NO_GLYPH; 256 * 256]);
     // Two bytes a texel for an outlined font (fill, alpha), one for a plain.
     let per = if outline > 0 { 2 } else { 1 };
-    let blank: Vec<u8> = if per == 2 { [atlas::NOT_OURS, 0].repeat(256 * 256) } else { vec![atlas::NOT_OURS; 256 * 256] };
+    let blank: Vec<u8> = if per == 2 {
+        [atlas::NOT_OURS, 0].repeat(256 * 256)
+    } else {
+        vec![atlas::NOT_OURS; 256 * 256]
+    };
     let mut cover = blank.clone();
     let mut texel_words = vec![[0u16; 4]; 256 * 256];
     // Pieces a texel word may name for an outlined font: within the radius,
     // half a texel and 1/32 of the pixel's centre.
-    let reach = if edge > 0.0 { edge + 0.5 + 1.0 / 32.0 } else { 0.0 };
+    let reach = if edge > 0.0 {
+        edge + 0.5 + 1.0 / 32.0
+    } else {
+        0.0
+    };
     let (mut x, mut row, mut ns) = (0u32, 0u32, 0u128);
-    let mut flush = |cells: &mut Vec<Cell>, texels: &mut Vec<u16>, records: &mut Vec<[f32; 4]>, map: &mut Vec<[f32; 4]>, cover: &mut Vec<u8>, texel_words: &mut Vec<[u16; 4]>| {
+    let mut flush = |cells: &mut Vec<Cell>,
+                     texels: &mut Vec<u16>,
+                     records: &mut Vec<[f32; 4]>,
+                     map: &mut Vec<[f32; 4]>,
+                     cover: &mut Vec<u8>,
+                     texel_words: &mut Vec<[u16; 4]>| {
         if !cells.is_empty() {
             let texture = dev.create_texture(texels);
             let atlas_h = records.len().div_ceil(256).max(1) as u32;
@@ -568,7 +798,14 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
             (x, row) = (0, row + 1);
         }
         if (row + 1) * ch > 256 {
-            flush(&mut cells, &mut texels, &mut records, &mut map, &mut cover, &mut texel_words);
+            flush(
+                &mut cells,
+                &mut texels,
+                &mut records,
+                &mut map,
+                &mut cover,
+                &mut texel_words,
+            );
             (x, row) = (0, 0);
         }
         let y0 = row * ch;
@@ -599,7 +836,10 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
             }
             let k = grid_scale / s;
             let at = [texel[2] - x as f32, texel[3] - y0 as f32];
-            for (i, word) in atlas::texel_words(&r, w, ch, at, k, reach).into_iter().enumerate() {
+            for (i, word) in atlas::texel_words(&r, w, ch, at, k, reach)
+                .into_iter()
+                .enumerate()
+            {
                 texel_words[((y0 + i as u32 / w) * 256 + x + i as u32 % w) as usize] = word;
             }
             let bytes = atlas::cover_cell(&r, w, ch, at, k, edge, 1.0 / GAMMA);
@@ -609,10 +849,23 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
             }
         }
         ns += t.elapsed().as_nanos();
-        cells.push(Cell { x, y: y0, w, contours, lines });
+        cells.push(Cell {
+            x,
+            y: y0,
+            w,
+            contours,
+            lines,
+        });
         x += w;
     }
-    flush(&mut cells, &mut texels, &mut records, &mut map, &mut cover, &mut texel_words);
+    flush(
+        &mut cells,
+        &mut texels,
+        &mut records,
+        &mut map,
+        &mut cover,
+        &mut texel_words,
+    );
     let n: usize = caches.iter().map(|c| c.cells.len()).sum();
     eprintln!(
         "{}: {} cells, {} caches, {:.3} ms a cell",
@@ -667,7 +920,11 @@ fn exact(cache: &Cache, probe: &[[f32; 4]]) -> Vec<Option<[f32; 4]>> {
                 .map(|(a, b)| {
                     let (e, q) = ([b[0] - a[0], b[1] - a[1]], [cx - a[0], cy - a[1]]);
                     let len2 = e[0] * e[0] + e[1] * e[1];
-                    let u = if len2 > 0.0 { ((q[0] * e[0] + q[1] * e[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                    let u = if len2 > 0.0 {
+                        ((q[0] * e[0] + q[1] * e[1]) / len2).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     (q[0] - e[0] * u).hypot(q[1] - e[1] * u)
                 })
                 .fold(f32::MAX, f32::min);
@@ -690,18 +947,45 @@ struct Page {
 fn page(cache: usize, c: &Cache, scale: f32, size: u32) -> Page {
     let mut verts = Vec::new();
     let mut pixels = 0.0;
-    let ndc = |x: f32, y: f32| [(x - 0.5) / size as f32 * 2.0 - 1.0, 1.0 - (y - 0.5) / size as f32 * 2.0, 0.5, 1.0];
+    let ndc = |x: f32, y: f32| {
+        [
+            (x - 0.5) / size as f32 * 2.0 - 1.0,
+            1.0 - (y - 0.5) / size as f32 * 2.0,
+            0.5,
+            1.0,
+        ]
+    };
     for cell in &c.cells {
         let (x0, y0) = (cell.x as f32 * scale, cell.y as f32 * scale);
-        let (x1, y1) = ((cell.x + cell.w) as f32 * scale, (cell.y + c.cell_height) as f32 * scale);
+        let (x1, y1) = (
+            (cell.x + cell.w) as f32 * scale,
+            (cell.y + c.cell_height) as f32 * scale,
+        );
         let (u0, v0) = (cell.x as f32 / 256.0, cell.y as f32 / 256.0);
-        let (u1, v1) = ((cell.x + cell.w) as f32 / 256.0, (cell.y + c.cell_height) as f32 / 256.0);
-        let v = |x: f32, y: f32, u: f32, w: f32| Vertex { pos: ndc(x, y), color: 0xFFFF_FFFF, uv: [u, w] };
-        let (a, b, cc, d) = (v(x0, y0, u0, v0), v(x1, y0, u1, v0), v(x0, y1, u0, v1), v(x1, y1, u1, v1));
+        let (u1, v1) = (
+            (cell.x + cell.w) as f32 / 256.0,
+            (cell.y + c.cell_height) as f32 / 256.0,
+        );
+        let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
+            pos: ndc(x, y),
+            color: 0xFFFF_FFFF,
+            uv: [u, w],
+        };
+        let (a, b, cc, d) = (
+            v(x0, y0, u0, v0),
+            v(x1, y0, u1, v0),
+            v(x0, y1, u0, v1),
+            v(x1, y1, u1, v1),
+        );
         verts.extend([a, b, cc, b, d, cc]);
         pixels += ((x1 - x0) * (y1 - y0)) as f64;
     }
-    Page { cache, scale, verts, pixels }
+    Page {
+        cache,
+        scale,
+        verts,
+        pixels,
+    }
 }
 
 // ---- output -------------------------------------------------------------
@@ -713,7 +997,11 @@ fn png(path: &PathBuf, size: u32, px: impl Fn(usize) -> [u8; 4]) {
         for &b in data {
             c ^= b as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
         }
         !c
@@ -814,6 +1102,8 @@ fn main() {
     let (mut reps, mut rounds, mut time) = (10usize, 7usize, true);
     // Pages written as PNGs for every shader (NAME-pageN.png).
     let mut shown: Vec<usize> = Vec::new();
+    // Per scale, the most texels over 16/255 against the reference, in %.
+    let mut limits: Vec<(f32, f64)> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| panic!("{} wants a value", a));
@@ -847,6 +1137,15 @@ fn main() {
             "--no-time" => time = false,
             "--chars" => CHAR_SET.set(val()).unwrap(),
             "--pages" => shown = val().split(',').map(|s| s.parse().expect("page")).collect(),
+            "--max-gross" => {
+                limits = val()
+                    .split(',')
+                    .map(|s| {
+                        let (scale, pct) = s.split_once(':').expect("--max-gross SCALE:PCT");
+                        (scale.parse().expect("scale"), pct.parse().expect("pct"))
+                    })
+                    .collect()
+            }
             _ => panic!("unknown argument {}", a),
         }
     }
@@ -1034,4 +1333,26 @@ fn main() {
     }
     print!("{}", report);
     let _ = std::fs::write(out.join("report.txt"), report);
+
+    let mut over = 0;
+    for (si, (name, _)) in shaders.iter().enumerate() {
+        for &(scale, max) in &limits {
+            let sc = scales
+                .iter()
+                .position(|&s| s == scale)
+                .unwrap_or_else(|| panic!("--max-gross {}: not among --scales", scale));
+            let e = &vs_exact[si].1[sc];
+            let pct = 100.0 * e.gross as f64 / e.text.max(1) as f64;
+            if pct > max {
+                eprintln!(
+                    "{} at {}x: {:.3} % over 16/255, the limit is {} %",
+                    name, scale, pct, max
+                );
+                over += 1;
+            }
+        }
+    }
+    if over > 0 {
+        std::process::exit(1);
+    }
 }
