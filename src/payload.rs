@@ -179,6 +179,7 @@ pub fn write(tex: usize, texels: &[u16], dirty: &Dirty) -> (u32, String) {
 }
 
 fn write_cells(tex: usize, texels: &[u16], dirty: &Dirty, cells: &mut u32) -> String {
+    let trace = crate::trace::span(crate::trace::Kind::Font);
     // Verdicts hold only for texels seen since: taken out here and put back
     // only by a pass that gets through every cell.
     let verdicts = CHECKED.lock().unwrap().remove(&tex);
@@ -243,9 +244,13 @@ fn write_cells(tex: usize, texels: &[u16], dirty: &Dirty, cells: &mut u32) -> St
     };
     OFFSETS.lock().unwrap().insert(key, (dx, dy));
 
+    drop(trace);
+    let trace = crate::trace::span(crate::trace::Kind::Clear);
     if !crate::v2::begin(tex, font.base, ch, font.pixel_size, font.flags, fp, &data) {
         return format!("{} px={}: no v2 textures", font.name, font.pixel_size);
     }
+    drop(trace);
+    let trace = crate::trace::span(crate::trace::Kind::Cells);
     let mut verdicts = verdicts
         .filter(|v| v.base == font.base)
         .unwrap_or_else(|| Checked {
@@ -293,7 +298,11 @@ fn write_cells(tex: usize, texels: &[u16], dirty: &Dirty, cells: &mut u32) -> St
             empty += 1;
         }
     }
-    crate::v2::commit(tex);
+    drop(trace);
+    {
+        let _trace = crate::trace::span(crate::trace::Kind::Commit);
+        crate::v2::commit(tex);
+    }
     *cells = written;
     if written > 0 {
         FRESH.lock().unwrap().current.insert(tex, font.base);

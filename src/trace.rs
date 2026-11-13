@@ -3,7 +3,11 @@
 //! one line to the log every 5 s.
 //!
 //! - CPU: scopes around our own work (span()). They nest: bind holds
-//!   refresh, refresh holds payload.
+//!   refresh, refresh holds payload, and payload its four parts: font
+//!   (whose cache it is, its cells from the client's memory, the font
+//!   file), clear (v2's arrays emptied), cells (each checked and pasted,
+//!   worked out if new) and commit (v2's textures uploaded). diff is the
+//!   client's upload compared with the shadow, before a payload.
 //! - GPU: timestamp queries at each Present and wherever a glyph cache
 //!   goes on or off stage 0 (phi calls text()), so a run of text draws sits
 //!   between two of them. Results come back a few frames later.
@@ -44,8 +48,15 @@ pub enum Kind {
     Refresh,
     Payload,
     Identify,
+    Diff,
+    Font,
+    Clear,
+    Cells,
+    Commit,
 }
-const NAMES: [&str; 4] = ["bind", "refresh", "payload", "identify"];
+const NAMES: [&str; 9] = [
+    "bind", "refresh", "payload", "identify", "diff", "font", "clear", "cells", "commit",
+];
 
 static ON: AtomicBool = AtomicBool::new(false);
 
@@ -229,7 +240,7 @@ struct Window {
     gpu_ms: f64,
     text_ms: f64,
     runs: u64,
-    cpu: [Acc; 4],
+    cpu: [Acc; NAMES.len()],
 }
 
 struct State {

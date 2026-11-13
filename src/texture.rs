@@ -151,6 +151,7 @@ fn end(tex: usize) {
     let Some((bits, pitch, a)) = c.lock.take() else {
         return;
     };
+    let trace = crate::trace::span(crate::trace::Kind::Diff);
     for y in a.top.max(0)..a.bottom.min(256) {
         let row = (bits as isize + (y - a.top) as isize * pitch as isize) as *const u16;
         for x in a.left.max(0)..a.right.min(256) {
@@ -162,6 +163,7 @@ fn end(tex: usize) {
             }
         }
     }
+    drop(trace);
     // The payload goes over it only when the whole texture is locked (the
     // only way the client does it).
     let full = a.left == 0 && a.top == 0 && a.right == 256 && a.bottom == 256;
