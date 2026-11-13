@@ -24,6 +24,15 @@ shader that works out how much of every pixel the outline covers. Edges
 and corners stay sharp at any scale. The client still picks the fonts,
 sizes, colours and layout; only how the letters are filled changes.
 
+<p align="center">
+  <img alt="Three lines of text, each as the client draws it and as the proxy does" src="docs/compare.png" width="896">
+</p>
+
+The client's 32 px glyphs stretched to between two and three and a half
+times their size, as a big nameplate or WeakAuras text is, and the same
+frame with the proxy on. Screen pixels, not enlarged. Text drawn 1:1
+looks the same either way.
+
 So this is a font rasteriser living inside a Direct3D 9 pixel shader, in
 a client from 2010, written by one person. It is a first version and
 behaves like one. I play with it daily all the same.
