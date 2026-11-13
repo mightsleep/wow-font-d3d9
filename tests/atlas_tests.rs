@@ -2,7 +2,9 @@
 //! cover bytes and its texel words, against the exact nonzero area
 //! (coverage::coverage) of the outline as the record holds it.
 
-use crate::atlas::{Record, cover_cell, encode, texel_words, texel_words_lists, texel_words_sets};
+use crate::atlas::{
+    Record, cell, cover_cell, encode, reach_of, texel_words, texel_words_lists, texel_words_sets,
+};
 use crate::coverage;
 use crate::glyph::{Glyph, P, Quad};
 use crate::reference::{coverage, distance, word_coverage};
@@ -531,6 +533,39 @@ fn records_pack_and_unpack() {
                 assert!(
                     Record::unpack(&bad, r.scale).is_none(),
                     "outline {i}: a ring moved"
+                );
+            }
+        }
+    }
+}
+
+/// A cell made at once (atlas::cell, the outline placed once for both) is
+/// its cover bytes and its texel words made apart: plain and outlined,
+/// with and without overlaps, wheels past what the sets hold, the test
+/// fonts; on the texel grid and off it.
+#[test]
+fn a_cell_is_its_cover_and_its_words() {
+    let mut all = outlines();
+    all.extend(overlapping().into_iter().take(60));
+    all.extend([20, 320].map(|teeth| vec![wheel(teeth)]));
+    all.extend(
+        test_fonts()
+            .into_iter()
+            .flat_map(|(_, glyphs)| glyphs.into_iter().map(|g| g.contours)),
+    );
+    for (i, o) in all.iter().enumerate() {
+        for radius in [0.0f32, 1.25, 2.25] {
+            let r = encode(o, None, radius > 0.0).unwrap();
+            let k = (crate::atlas::GRID - 1.0) / 30.0;
+            for at in [[2.0, 32.0], [2.37, 31.81]] {
+                let (bytes, words) = cell(&r, 34, 34, at, k, radius, 1.0 / 1.5);
+                assert!(
+                    bytes == cover_cell(&r, 34, 34, at, k, radius, 1.0 / 1.5),
+                    "outline {i} radius {radius} at {at:?}: other cover bytes"
+                );
+                assert!(
+                    words == texel_words(&r, 34, 34, at, k, reach_of(radius)),
+                    "outline {i} radius {radius} at {at:?}: other words"
                 );
             }
         }

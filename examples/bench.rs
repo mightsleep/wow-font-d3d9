@@ -753,13 +753,6 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
     };
     let mut cover = blank.clone();
     let mut texel_words = vec![[0u16; 4]; 256 * 256];
-    // Pieces a texel word may name for an outlined font: within the radius,
-    // half a texel and 1/32 of the pixel's centre.
-    let reach = if edge > 0.0 {
-        edge + 0.5 + 1.0 / 32.0
-    } else {
-        0.0
-    };
     let (mut x, mut row, mut ns) = (0u32, 0u32, 0u128);
     let mut flush = |cells: &mut Vec<Cell>,
                      texels: &mut Vec<u16>,
@@ -838,13 +831,10 @@ fn build(file: &str, px: u32, outline: u32, dev: &Device) -> Vec<Cache> {
             }
             let k = grid_scale / s;
             let at = [texel[2] - x as f32, texel[3] - y0 as f32];
-            for (i, word) in atlas::texel_words(&r, w, ch, at, k, reach)
-                .into_iter()
-                .enumerate()
-            {
+            let (bytes, words) = atlas::cell(&r, w, ch, at, k, edge, 1.0 / GAMMA);
+            for (i, word) in words.into_iter().enumerate() {
                 texel_words[((y0 + i as u32 / w) * 256 + x + i as u32 % w) as usize] = word;
             }
-            let bytes = atlas::cover_cell(&r, w, ch, at, k, edge, 1.0 / GAMMA);
             for (j, row) in bytes.chunks_exact(per * w as usize).enumerate() {
                 let i = per * ((y0 as usize + j) * 256 + x as usize);
                 cover[i..i + row.len()].copy_from_slice(row);

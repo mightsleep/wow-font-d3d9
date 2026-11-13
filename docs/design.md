@@ -172,7 +172,9 @@ anyway, and the cover gets a second byte (A8L8: fill, and
 `d + sqrt(1/2) <= r - 1/2` makes it 1: purity again. A quadratic lies in
 the hull of its control points, so their box's distance bounds the
 piece's from below and far pieces skip the chords; six chords stray
-`|a - 2b + c| / 144`.
+`|a - 2b + c| / 144`. On the CPU a cell's distances from its texel
+centres are worked out once, for these bytes and for the texel words'
+nearest pieces (item 15) alike: a fifth off an outlined cell's time.
 
 ## Texel words
 

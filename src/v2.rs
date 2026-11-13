@@ -497,16 +497,8 @@ pub fn cell(
     });
     let (bytes, words) = baked.unwrap_or_else(|| {
         let at = [ox - start as f32, oy - y0 as f32];
-        let b: Arc<[u8]> =
-            atlas::cover_cell(&e.record, w, ch, at, k, radius, 1.0 / bundle.gamma).into();
-        // An outlined font's words name the pieces within its radius, half
-        // a texel and 1/32 of a pixel's centre too.
-        let reach = if outlined {
-            radius + 0.5 + 1.0 / 32.0
-        } else {
-            0.0
-        };
-        let wd: Arc<[[u16; 4]]> = atlas::texel_words(&e.record, w, ch, at, k, reach).into();
+        let (b, wd) = atlas::cell(&e.record, w, ch, at, k, radius, 1.0 / bundle.gamma);
+        let (b, wd): (Arc<[u8]>, Arc<[[u16; 4]]>) = (b.into(), wd.into());
         COVER.lock().unwrap().insert(key, (b.clone(), wd.clone()));
         let v = pack(&b, &wd);
         // A record counts its words in 16 bits.
