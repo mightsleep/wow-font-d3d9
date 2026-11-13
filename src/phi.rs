@@ -19,7 +19,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering::Relaxed};
 
-use crate::{dev_orig, draw, fonts, log, payload, settings, texture, Class, Ptr, HRESULT};
+use crate::{Class, HRESULT, Ptr, dev_orig, draw, fonts, log, payload, settings, texture};
 
 const DEV_RESET: usize = 16;
 const DEV_CREATE_STATE_BLOCK: usize = 59;

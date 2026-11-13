@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
 use crate::atlas::{self, Record};
-use crate::cache::{self, fx_map, FxMap};
+use crate::cache::{self, FxMap, fx_map};
 use crate::glyph::{self, Placement};
-use crate::{dev_orig, log, settings, Ptr, HRESULT};
+use crate::{HRESULT, Ptr, dev_orig, log, settings};
 
 const DEV_CREATE_TEXTURE: usize = 23;
 const TEX_LOCK_RECT: usize = 19;
@@ -255,11 +255,7 @@ struct Cache {
 
 impl Cache {
     fn per(&self) -> usize {
-        if self.radius > 0.0 {
-            2
-        } else {
-            1
-        }
+        if self.radius > 0.0 { 2 } else { 1 }
     }
 }
 
@@ -401,12 +397,7 @@ fn unpack(v: &[u16], n: usize, texels: usize) -> Option<Baked> {
         .flat_map(|w| w.to_le_bytes())
         .take(n)
         .collect();
-    let words: Arc<[[u16; 4]]> = v[split..]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .copied()
-        .collect();
+    let words: Arc<[[u16; 4]]> = v[split..].as_chunks::<4>().0.iter().copied().collect();
     Some((bytes, words))
 }
 

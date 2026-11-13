@@ -2,11 +2,11 @@
 //! cover bytes and its texel words, against the exact nonzero area
 //! (coverage::coverage) of the outline as the record holds it.
 
-use crate::atlas::{cover_cell, encode, texel_words, Record};
+use crate::atlas::{Record, cover_cell, encode, texel_words};
 use crate::coverage;
-use crate::glyph::{Glyph, Quad, P};
+use crate::glyph::{Glyph, P, Quad};
 use crate::reference::{coverage, distance, word_coverage};
-use crate::shapes::{rect, Rng};
+use crate::shapes::{Rng, rect};
 
 /// A circle of radius r as eight quadratic arcs, either way round.
 fn circle(c: P, r: f32, ccw: bool) -> Vec<Quad> {

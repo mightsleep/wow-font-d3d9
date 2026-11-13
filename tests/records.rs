@@ -4,9 +4,21 @@
 use crate::record::{EMPTY, Key, PLACEMENT, WORDS, encode, read};
 
 fn sample() -> Vec<(Key, u8, Vec<u16>)> {
-    let key = |code, dx, top, w, h| Key { code, dx, top, w, h };
+    let key = |code, dx, top, w, h| Key {
+        code,
+        dx,
+        top,
+        w,
+        h,
+    };
     vec![
-        (key(0x41, 1, 3, 17, 34), WORDS, (0..17 * 34u32).map(|i| (i.wrapping_mul(2654435761u32) >> 16) as u16).collect()),
+        (
+            key(0x41, 1, 3, 17, 34),
+            WORDS,
+            (0..17 * 34u32)
+                .map(|i| (i.wrapping_mul(2654435761u32) >> 16) as u16)
+                .collect(),
+        ),
         (key(0x20, 0, 0, 0, 0), EMPTY, vec![]),
         (key(0x4e00, 0, 2, 3, 1), WORDS, vec![0x8001, 0x1234, 0xffff]),
         (key(u32::MAX, 1, 1, 0, 0), PLACEMENT, vec![]),
@@ -19,7 +31,12 @@ fn read_all(d: &[u8]) -> Vec<(Key, u8, Vec<u16>)> {
     let mut out = Vec::new();
     let mut at = 0;
     while let Some((k, kind, words, n, next)) = read(d, at) {
-        let w = d[words..words + 2 * n].as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
+        let w = d[words..words + 2 * n]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_le_bytes(c))
+            .collect();
         out.push((k, kind, w));
         at = next;
     }
@@ -61,7 +78,13 @@ fn a_damaged_byte_ends_the_bundle_at_its_record() {
         for i in start..end {
             let mut bad = d.clone();
             bad[i] ^= 0x10;
-            assert_eq!(read_all(&bad), sample()[..r], "byte {} of record {}", i - start, r);
+            assert_eq!(
+                read_all(&bad),
+                sample()[..r],
+                "byte {} of record {}",
+                i - start,
+                r
+            );
         }
     }
 }

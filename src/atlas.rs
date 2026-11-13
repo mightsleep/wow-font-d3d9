@@ -11,7 +11,7 @@
 //!              y, the low 4 bits of all six in the fourth float
 //!   ring       every piece in outline order, twice (texel_words)
 
-use crate::glyph::{Quad, P};
+use crate::glyph::{P, Quad};
 
 /// Grid steps across the outline's larger side: 16-bit coordinates.
 pub const GRID: f32 = 65536.0;

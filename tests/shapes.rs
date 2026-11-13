@@ -26,7 +26,10 @@ impl Rng {
 
     /// Uniform in [lo, hi).
     pub fn f(&mut self, lo: f32, hi: f32) -> f32 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         lo + (hi - lo) * ((self.0 >> 40) as f32 / (1u64 << 24) as f32)
     }
 }

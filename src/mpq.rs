@@ -46,11 +46,7 @@ const HASH_KEY: u32 = 3;
 /// 'a'..='z' (c - 'a' < 26 as an unsigned compare); '/' becomes '\'.
 fn storm_char(c: u8) -> u8 {
     let up = c - (((c.wrapping_sub(b'a') < 26) as u8) << 5);
-    if up == b'/' {
-        b'\\'
-    } else {
-        up
-    }
+    if up == b'/' { b'\\' } else { up }
 }
 
 fn hash(name: &str, kind: u32) -> u32 {
@@ -108,10 +104,7 @@ pub struct Archive {
 }
 
 fn words(b: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    b.as_chunks::<4>()
-        .0
-        .iter()
-        .map(|&w| u32::from_le_bytes(w))
+    b.as_chunks::<4>().0.iter().map(|&w| u32::from_le_bytes(w))
 }
 
 impl Archive {

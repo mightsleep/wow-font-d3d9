@@ -1,8 +1,8 @@
 //! The reference decoder: the pixel shader (shaders/decoder.hlsl) line for
 //! line in f32 on the CPU, against which the tests hold the encoder.
 
-use crate::atlas::{at_t, t_at, Record, COARSE, PACK, WORD_LIST, WORD_NONE};
-use crate::glyph::{Quad, P};
+use crate::atlas::{COARSE, PACK, Record, WORD_LIST, WORD_NONE, at_t, t_at};
+use crate::glyph::{P, Quad};
 
 fn unpack(v: f32) -> P {
     let x = (v / PACK).floor();
@@ -197,8 +197,5 @@ pub fn word_coverage(
             }
         }
     }
-    Some((
-        (sum.abs() / (4.0 * h[0] * h[1])).min(1.0),
-        best.sqrt(),
-    ))
+    Some(((sum.abs() / (4.0 * h[0] * h[1])).min(1.0), best.sqrt()))
 }

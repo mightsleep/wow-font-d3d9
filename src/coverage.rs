@@ -1,7 +1,7 @@
 //! A glyph's exact area in each texel, from its outline cut into chords:
 //! the fill of v2's cover bytes (atlas::cover_cell) and the bench's truth.
 
-use crate::glyph::{self, Quad, P};
+use crate::glyph::{self, P, Quad};
 
 /// How far a curve's chords may stray from it, in texels.
 const FLAT_TOL: f32 = 1.0 / 256.0;

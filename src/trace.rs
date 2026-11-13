@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::{dev_orig, log, Ptr, HRESULT};
+use crate::{HRESULT, Ptr, dev_orig, log};
 
 const DEV_PRESENT: usize = 17;
 const DEV_CREATE_QUERY: usize = 118;

@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-use crate::{dev_orig, log, Ptr, DEV_CREATE_PIXEL_SHADER, HRESULT};
+use crate::{DEV_CREATE_PIXEL_SHADER, HRESULT, Ptr, dev_orig, log};
 
 // vkd3d's bytecode with one constant an instruction (build.rs, ports.rs).
 static DECODER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/decoder.ps3"));
@@ -117,7 +117,9 @@ fn diagnose(dev: Ptr) -> usize {
             release(d3d as usize);
         }
         let b: &[u8] = unsafe { std::slice::from_raw_parts(id.as_ptr() as *const u8, 1104) };
-        let text = |s: &[u8]| String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or(&[])).into_owned();
+        let text = |s: &[u8]| {
+            String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or(&[])).into_owned()
+        };
         let ver = u64::from_le_bytes(b[1056..1064].try_into().unwrap());
         let u = |at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
         log(&format!(
@@ -221,7 +223,11 @@ fn compiled(dev: Ptr) -> usize {
     log(&format!(
         "diag: d3dcompiler_47's decoder ({} bytes{}) -> {:#x} ({:#x})",
         bytes.len(),
-        if saved { ", saved as wow-font-d3d9-fxc.ps3" } else { "" },
+        if saved {
+            ", saved as wow-font-d3d9-fxc.ps3"
+        } else {
+            ""
+        },
         ps,
         r
     ));
