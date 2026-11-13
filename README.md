@@ -237,9 +237,9 @@ writes them again and `nix flake check` fails until they match.
 ## Tests and bench
 
 `tests/` is a crate of its own that runs on the host: `cargo test-host`
-from the repository's root, in the dev shell or out of it (an alias in
-`.cargo/config.toml`; `WOW_FONT_TEST_FONTS`, font files with `:` between,
-adds the texel words' checks on real fonts). It checks the encoder's
+from the repository's root (an alias in `.cargo/config.toml` for
+cargo-nextest, which the dev shell has; `WOW_FONT_TEST_FONTS`, font files
+with `:` between, adds the texel words' checks on real fonts). It checks the encoder's
 invariants against brute force (area under the nonzero rule; the atlas
 records through a CPU copy of the decoder, `tests/reference.rs`, the
 cover bytes and the texel words against the exact coverage) and

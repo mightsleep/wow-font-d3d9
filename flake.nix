@@ -148,7 +148,9 @@
       cargoVendorDir = craneLib.vendorCargoDeps {cargoLock = ./tests/Cargo.lock;};
       cargoExtraArgs = "--manifest-path tests/Cargo.toml";
     };
-    tests = craneLib.cargoTest testCrate;
+    # By nextest, as `cargo test-host` in the dev shell: a process a test,
+    # each with its time. Here every failure is shown, not the first alone.
+    tests = craneLib.cargoNextest (testCrate // {cargoNextestExtraArgs = "--no-fail-fast";});
     clippyTests = craneLint.cargoClippy (testCrate // {cargoClippyExtraArgs = "--all-targets -- -D warnings";});
 
     # Every .rs as rustfmt has it: the DLL, the bench, build.rs, the tests.
@@ -375,6 +377,7 @@
           ])
           mingw
           pkgs.vkd3d
+          pkgs.cargo-nextest
         ];
       });
   };

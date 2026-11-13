@@ -367,7 +367,7 @@ fn texel_words_sets_match_lists() {
 
 /// A digest of every texel word for the test fonts, plain and outlined, at
 /// 32 px and at an offset of the grid: any change to texel_words that
-/// should keep its words shows here (cargo test -- --nocapture).
+/// should keep its words shows here (cargo test-host --no-capture).
 #[test]
 fn texel_words_digest() {
     use std::hash::{Hash, Hasher};
