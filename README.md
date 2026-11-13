@@ -56,7 +56,7 @@ place.
 
 | key       | default | meaning |
 |-----------|---------|---------|
-| `gamma`   | 1.5     | alpha = coverage^(1/gamma) |
+| `gamma`   | 1.5     | alpha = coverage^(1/gamma) for white text, 1 - (1 - coverage)^(1/gamma) for black (shadows, outlines), between by the colour's luma |
 | `outline` | 0.25    | pixels added to the client's outline radius |
 | `v2`      | 1       | 0: the client's bitmaps for every font, as without the proxy |
 | `words`   | 1       | 0: magnified text reads the bands, not the texel words; 2: the words' path in colour |

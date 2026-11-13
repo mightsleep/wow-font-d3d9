@@ -577,8 +577,9 @@ fn a_cell_is_its_cover_and_its_words() {
 
 /// An outlined font's cover bytes (at 1, 2 and 4 texels a unit, radius
 /// 1.25): the fill in L as the plain byte without the gamma, and in A
-/// max(outline, fill) for the outline's ramp over the true distance from
-/// the texel's centre; a pure A only where that is 0 or 1.
+/// black's alpha of max(outline, fill) for the outline's ramp over the
+/// true distance from the texel's centre; a pure A only where that is 0
+/// or 1.
 #[test]
 fn outlined_cover_bytes() {
     let (g, radius) = (1.0 / 1.5, 1.25f32);
@@ -607,9 +608,9 @@ fn outlined_cover_bytes() {
                     ];
                     let d = distance(&r, c, (radius + 2.0) * k) / k;
                     let want = (radius - d + 0.5).clamp(0.0, 1.0).max(e);
-                    // The byte back through the gamma; an edge's byte stops
-                    // at 1 and 254.
-                    let got = (a / 255.0).powf(1.5);
+                    // The byte back through black's alpha, 1 - (1 - c)^(1/1.5);
+                    // an edge's byte stops at 1 and 254.
+                    let got = 1.0 - (1.0 - a / 255.0).powf(1.5);
                     assert!(
                         (got - want).abs() <= 0.02,
                         "outline {i} at {px}: texel ({tx}, {ty}) alpha {a} ({got}), want {want} at distance {d}"

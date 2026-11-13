@@ -283,22 +283,27 @@
 
     # The bench as a test, for CI: the committed decoder on lavapipe against
     # the exact reference, Roboto with and without an outline, failing when
-    # a scale has more texels off by over 16/255 than its limit. The decoder
-    # does 0.29, 0, 0.000 and 0.001 % now (Roboto's contours overlap, so the
-    # union is under test too): the limits leave a third at 0.5x and tens of
-    # texels elsewhere, for a newer Mesa.
+    # a scale has more texels off by over 16/255 than its limit. Once in
+    # white and once in black, the two ends of the alpha's tone. The decoder
+    # does 0.82, 0, 0.000 and 0.001 % now (Roboto's contours overlap, so the
+    # union is under test too; at 0.5x an outline's alpha near 1 is steep in
+    # its distance, which six chords have to a hundredth of a texel): the
+    # limits leave a third at 0.5x and tens of texels elsewhere, for a newer
+    # Mesa.
     gateApp = pkgs.writeShellApplication {
       name = "wow-font-gate";
       text = let
         font = f: px: outline: "--font 'Z:${pkgs.roboto}/share/fonts/truetype/${f}.ttf:${toString px}:${toString outline}'";
       in ''
-        exec ${benchApp}/bin/wow-font-bench --lavapipe --no-time \
-          --scales 0.5,1,2,4 \
-          ${font "Roboto-Regular" 32 1} \
-          ${font "Roboto-Regular" 14 0} \
-          ${font "Roboto-Bold" 20 1} \
-          --max-gross 0.5:0.4,1:0.02,2:0.02,4:0.02 \
-          "$@"
+        for color in ffffff 000000; do
+          ${benchApp}/bin/wow-font-bench --lavapipe --no-time \
+            --scales 0.5,1,2,4 --color "$color" \
+            ${font "Roboto-Regular" 32 1} \
+            ${font "Roboto-Regular" 14 0} \
+            ${font "Roboto-Bold" 20 1} \
+            --max-gross 0.5:1.1,1:0.02,2:0.02,4:0.02 \
+            "$@"
+        done
       '';
     };
 

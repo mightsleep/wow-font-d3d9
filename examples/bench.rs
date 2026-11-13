@@ -12,7 +12,8 @@
 //!
 //!   bench.exe --out DIR --ps NAME=FILE.ps3 ... --font FILE:PX:OUTLINE ...
 //!             [--scales 0.5,1,1.5,2] [--reps 10] [--rounds 7] [--no-time]
-//!             [--pages 3,7] [--chars TEXT] [--max-gross 1:0.05,2:0.25]
+//!             [--pages 3,7] [--chars TEXT] [--color RRGGBB]
+//!             [--max-gross 1:0.05,2:0.25]
 //!
 //! --max-gross SCALE:PCT,... makes it a test: exit 1 when a shader has
 //! more than PCT % of its text texels off the reference by over 16/255
@@ -591,7 +592,7 @@ impl Device {
                 m(self.0, DEV_SET_PS_CONSTANT_F);
             fc(self.0, CFG + 2, atl.as_ptr(), 2);
             let ch = cache.cell_height as f32;
-            let cfg = [ch, 1.0 / ch, 1.0 / GAMMA, 0.0, cache.edge, 0.0, 0.0, 0.0];
+            let cfg = [ch, 1.0 / ch, 1.0 / GAMMA, GAMMA, cache.edge, 0.0, 0.0, 0.0];
             let f: unsafe extern "system" fn(Ptr, u32, *const f32, u32) -> HRESULT =
                 m(self.0, DEV_SET_PS_CONSTANT_F);
             f(self.0, CFG, cfg.as_ptr(), 2);
@@ -719,6 +720,14 @@ struct Cache {
 
 const CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:;!?'\"()[]{}<>+-*/=%&#@$_|~^ěščřžýáíéůúňťď";
 static CHAR_SET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// The colour the text is drawn in, RRGGBB (--color): white unless said.
+static COLOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// COLOR as the shader gets it, 0..1.
+fn color() -> [f32; 3] {
+    let c = COLOR.get().copied().unwrap_or(0xFF_FFFF);
+    [16, 8, 0].map(|s| (c >> s & 255) as f32 / 255.0)
+}
 
 /// Caches of `font` at `px` laid out as the client does it (rows of the
 /// cell height, cells as wide as the bitmap plus the outline's padding),
@@ -884,6 +893,12 @@ fn exact(cache: &Cache, probe: &[[f32; 4]]) -> Vec<Option<[f32; 4]>> {
         }
     }
     let g = 1.0 / GAMMA;
+    // The decoder's alphas (decoder.hlsl, tone): a light text's and black's.
+    let rgb = color();
+    let luma = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+    let black = |c: f32| 1.0 - (1.0 - c).powf(g);
+    let tone = |c: f32| black(c) + (c.powf(g) - black(c)) * luma;
+    let tint = |t: [f32; 4]| Some([t[0] * rgb[0], t[1] * rgb[1], t[2] * rgb[2], t[3]]);
     probe
         .iter()
         .map(|t| {
@@ -903,7 +918,7 @@ fn exact(cache: &Cache, probe: &[[f32; 4]]) -> Vec<Option<[f32; 4]>> {
                 .collect();
             let fill = coverage::coverage(&coverage::polylines(&boxed), 1, 1)[0];
             if cache.edge == 0.0 {
-                return Some([1.0, 1.0, 1.0, fill.powf(g)]);
+                return tint([1.0, 1.0, 1.0, tone(fill)]);
             }
             let d = cell
                 .lines
@@ -921,7 +936,7 @@ fn exact(cache: &Cache, probe: &[[f32; 4]]) -> Vec<Option<[f32; 4]>> {
                 })
                 .fold(f32::MAX, f32::min);
             let edge = ((cache.edge - d) / (0.5 * (t[2] + t[3])) + 0.5).clamp(0.0, 1.0);
-            Some([fill, fill, fill, edge.max(fill).powf(g)])
+            tint([fill, fill, fill, black(edge.max(fill))])
         })
         .collect()
 }
@@ -960,7 +975,7 @@ fn page(cache: usize, c: &Cache, scale: f32, size: u32) -> Page {
         );
         let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
             pos: ndc(x, y),
-            color: 0xFFFF_FFFF,
+            color: 0xFF00_0000 | COLOR.get().copied().unwrap_or(0xFF_FFFF),
             uv: [u, w],
         };
         let (a, b, cc, d) = (
@@ -1128,6 +1143,9 @@ fn main() {
             "--rounds" => rounds = val().parse().expect("rounds"),
             "--no-time" => time = false,
             "--chars" => CHAR_SET.set(val()).unwrap(),
+            "--color" => COLOR
+                .set(u32::from_str_radix(&val(), 16).expect("--color RRGGBB"))
+                .unwrap(),
             "--pages" => shown = val().split(',').map(|s| s.parse().expect("page")).collect(),
             "--max-gross" => {
                 limits = val()

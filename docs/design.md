@@ -273,6 +273,26 @@ fifth of the time: a 12 px Latin cell's fill 10.6 to 1.8 us, a 32 px CJK
 one 67.7 to 10.7. Where the union removed a piece from inside the fill
 its texels turn pure, a step or two of 255.
 
+## Tone
+
+**23. Alpha by what is drawn.** The device blends display values, not
+light, so a coverage `c` as alpha is wrong both ways: white text over
+dark comes out thin, black over anything heavy. For black the right
+alpha does not depend on what is under it: the light left is `(1 - c)`
+of the background's, its display value `(1 - c)^(1/g)` of it, so
+
+    alpha = 1 - (1 - c)^(1/g)
+
+and for white over black it is `c^(1/g)`. A plain font takes the two by
+the luma of the colour it is drawn in (the vertex colour, so a shadow,
+which the client draws as the same quads again in black, gets black's);
+an outlined font always black's, its alpha being the black outline's edge
+whatever the text. The cover bytes keep `c^(1/g)` for a plain font (white
+text reads the byte as it is, the rest take `c` back out of it) and
+black's alpha for an outlined one. `g` is the `gamma` knob (1.5). Before,
+all of it was `c^(1/g)`: at half coverage a shadow's alpha 0.63 where
+0.37 is right and the client's bitmap gives 0.5.
+
 ## Tried and set aside
 
 - **Hermite fields in the client's cells** (version one): over 16/255 at

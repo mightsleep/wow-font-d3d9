@@ -421,8 +421,9 @@ fn plain_byte(cov: f32, reaches: bool, inv_gamma: f32) -> u8 {
 
 /// An outlined font's two bytes (A8L8) from the texel's fill, whether a
 /// piece reaches in, and the distance d from its centre in texels: the
-/// fill in L, linear as the client's, and max(outline, fill) after the
-/// gamma in A. Pure only where the distance settles the outline over the
+/// fill in L, linear as the client's, and in A the alpha of
+/// max(outline, fill) for a black edge, 1 - (1 - c)^(1/gamma): the
+/// outline is black whatever the text's colour (docs/design.md, item 23). Pure only where the distance settles the outline over the
 /// whole texel (docs/design.md, item 14).
 fn outlined_bytes(fill: f32, reaches: bool, d: f32, radius: f32, inv_gamma: f32) -> [u8; 2] {
     let edge = (radius - d + 0.5).clamp(0.0, 1.0);
@@ -445,7 +446,9 @@ fn outlined_bytes(fill: f32, reaches: bool, d: f32, radius: f32, inv_gamma: f32)
     } else {
         0
     };
-    let a = (alpha.powf(inv_gamma) * 255.0).round().clamp(1.0, 254.0) as u8;
+    let a = ((1.0 - (1.0 - alpha).powf(inv_gamma)) * 255.0)
+        .round()
+        .clamp(1.0, 254.0) as u8;
     [l, a]
 }
 

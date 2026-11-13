@@ -18,7 +18,7 @@ sampler2D cover : register(s3);
 // unbound stage reads; 1 the runs; 2 none needed).
 sampler2D words : register(s4);
 
-// x cell height, y 1 / cell height, z 1 / gamma.
+// x cell height, y 1 / cell height, z 1 / gamma, w gamma.
 float4 cfg : register(c200);
 // x the outline's radius in texels, 0 for a plain font; w 1 to colour the
 // words' path (the words knob at 2).
@@ -33,6 +33,17 @@ float4 cmap : register(c203);
 float4 client(float2 uv, float4 color)
 {
     return tex2Dlod(s0, float4(uv, 0.0, 0.0)) * color;
+}
+
+// A plain font's alpha for coverage c drawn in `rgb` (docs/design.md,
+// item 23). The device blends in display values: light text over dark
+// comes out thin there and wants c^(1/gamma); black over anything wants
+// 1 - (1 - c)^(1/gamma), exactly. Between them by the colour's luma.
+float tone(float c, float3 rgb)
+{
+    float light = pow(c, cfg.z);
+    float dark = 1.0 - pow(1.0 - c, cfg.z);
+    return lerp(dark, light, dot(rgb, float3(0.299, 0.587, 0.114)));
 }
 
 static const float PACK = 4096.0;
@@ -184,7 +195,11 @@ float4 main(float4 color : COLOR0, centroid float2 uv : TEXCOORD0) : COLOR0
     bool within = all(f - 0.5 * fw >= -1.0 / 1024.0) && all(f + 0.5 * fw <= 1.0 + 1.0 / 1024.0);
     bool pure = (v == 0.0 || v == 255.0) && (!outlined || va == 0.0 || va == 255.0);
     if (one || (pure && within)) {
-        float4 o = outlined ? float4(v, v, v, va) / 255.0 : float4(1.0, 1.0, 1.0, v / 255.0);
+        // The plain byte is c^(1/gamma), a light text's alpha as it is;
+        // the coverage back out of it for the rest. The outlined A is its
+        // alpha already (atlas.rs).
+        float4 o = outlined ? float4(v, v, v, va) / 255.0
+            : float4(1.0, 1.0, 1.0, tone(pow(v / 255.0, cfg.w), color.rgb));
         return o * color;
     }
     // Magnified (a footprint of at most a texel and 1/64), the texel's word:
@@ -318,10 +333,12 @@ float4 main(float4 color : COLOR0, centroid float2 uv : TEXCOORD0) : COLOR0
     }
     float fill = saturate(total / (4.0 * h.x * h.y));
     if (!outlined) {
-        return float4(1.0, 1.0, 1.0, pow(fill, cfg.z)) * color;
+        return float4(1.0, 1.0, 1.0, tone(fill, color.rgb)) * color;
     }
     // The outline from the distance in texels, as the client's shows it:
-    // the fill in grey, max(outline, fill) in alpha.
+    // the fill in grey, max(outline, fill) in alpha. Whatever the text's
+    // colour, the edge that alpha makes is the black outline's: black's
+    // alpha (tone).
     float edge = saturate((field.x - sqrt(d2) / atl.w) / fwa + 0.5);
-    return float4(fill, fill, fill, pow(max(edge, fill), cfg.z)) * color;
+    return float4(fill, fill, fill, 1.0 - pow(1.0 - max(edge, fill), cfg.z)) * color;
 }
