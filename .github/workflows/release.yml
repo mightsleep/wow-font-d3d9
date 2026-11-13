@@ -6,16 +6,19 @@ name: release
 on:
   push:
     tags: ['v*']
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+      id-token: write # the attestation signs with the job's OIDC token
+      attestations: write # and stores it with the repository
     steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: The tag is the crate's version
         run: |
           want="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
@@ -35,7 +38,7 @@ jobs:
           sha256sum d3d9.dll "$d.zip" "$d/d3d9.dll" > SHA256SUMS
           cat SHA256SUMS
       - name: Attest
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             d3d9.dll

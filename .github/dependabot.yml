@@ -1,0 +1,12 @@
+# The action pins in .github/workflows (a SHA with its version after it),
+# bumped weekly. Cargo and the flake inputs are bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A release a week old before it is proposed: time for a compromised
+    # one to be yanked.
+    cooldown:
+      default-days: 7
