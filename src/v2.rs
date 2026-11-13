@@ -7,6 +7,7 @@
 //! - s3 the cover: a byte per cache texel (two for outlined fonts, A8L8),
 //!   NOT_OURS where a cell is not ours;
 //! - s4 the texel words, 0 (the bands) where a cell is not ours.
+//!
 //! Cover bytes and words are memoised by glyph, size and place, and kept
 //! on disk (cache.rs). Monochrome fonts keep the client's bitmaps.
 
@@ -166,7 +167,7 @@ fn font_info(fp: u64, data: &[u8]) -> Option<(f32, f32)> {
     let face = ttf_parser::Face::parse(data, 0).ok()?;
     let bb = face.global_bounding_box();
     let side = ((bb.x_max - bb.x_min) as f32).max((bb.y_max - bb.y_min) as f32);
-    if !(side > 0.0) {
+    if side.is_nan() || side <= 0.0 {
         return None;
     }
     let v = ((atlas::GRID - 1.0) / side, face.units_per_em() as f32);
@@ -401,8 +402,10 @@ fn unpack(v: &[u16], n: usize, texels: usize) -> Option<Baked> {
         .take(n)
         .collect();
     let words: Arc<[[u16; 4]]> = v[split..]
-        .chunks_exact(4)
-        .map(|c| [c[0], c[1], c[2], c[3]])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .copied()
         .collect();
     Some((bytes, words))
 }

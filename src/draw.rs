@@ -38,8 +38,10 @@ fn try_make(dev: Ptr, words: &[u32]) -> (usize, HRESULT) {
 }
 
 fn words(code: &[u8]) -> Vec<u32> {
-    code.chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+    code.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_le_bytes(c))
         .collect()
 }
 

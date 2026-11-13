@@ -23,3 +23,13 @@ strip = true
 ttf-parser = "0.25.1"
 adler2 = { version = "2.0.1", default-features = false }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+
+# `nix flake check` runs clippy with -D warnings. Allowed: the Win32 names
+# (HRESULT) and exports Windows calls, not Rust (no `# Safety` reader);
+# vtable and tuple types spelled where they are used; index loops over
+# texels and words, which read as the maths they are.
+[lints.clippy]
+upper_case_acronyms = "allow"
+missing_safety_doc = "allow"
+type_complexity = "allow"
+needless_range_loop = "allow"

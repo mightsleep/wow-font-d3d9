@@ -25,8 +25,10 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ports.rs");
     let code: Vec<u32> = std::fs::read("shaders/decoder.ps3")
         .expect("shaders/decoder.ps3")
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_le_bytes(c))
         .collect();
     let fixed = ports::one_port(&code).expect("decoder.ps3: no temporaries to spare");
     assert_eq!(

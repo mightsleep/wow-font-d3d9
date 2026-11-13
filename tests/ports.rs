@@ -6,8 +6,10 @@ use crate::ports::{most_constants, one_port};
 fn decoder() -> Vec<u32> {
     std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../shaders/decoder.ps3"))
         .unwrap()
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_le_bytes(c))
         .collect()
 }
 

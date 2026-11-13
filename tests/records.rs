@@ -19,7 +19,7 @@ fn read_all(d: &[u8]) -> Vec<(Key, u8, Vec<u16>)> {
     let mut out = Vec::new();
     let mut at = 0;
     while let Some((k, kind, words, n, next)) = read(d, at) {
-        let w = d[words..words + 2 * n].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let w = d[words..words + 2 * n].as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
         out.push((k, kind, w));
         at = next;
     }

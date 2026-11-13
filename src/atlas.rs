@@ -108,7 +108,7 @@ pub fn encode(contours: &[Vec<Quad>], scale: Option<f32>, outline: bool) -> Opti
         }
     }
     let side = (hi[0] - lo[0]).max(hi[1] - lo[1]);
-    if !(side > 0.0) {
+    if side.is_nan() || side <= 0.0 {
         return None;
     }
     let scale = scale.unwrap_or((GRID - 1.0) / side);

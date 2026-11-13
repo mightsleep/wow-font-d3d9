@@ -223,6 +223,7 @@ pub unsafe extern "system" fn Direct3DCreate9Ex(sdk: u32, out: *mut Ptr) -> HRES
 macro_rules! forward {
     ($name:ident ( $($a:ident : $t:ty),* ) -> $r:ty = $default:expr) => {
         #[unsafe(no_mangle)]
+        #[allow(clippy::unused_unit)]
         pub unsafe extern "system" fn $name($($a: $t),*) -> $r {
             let f = real_fn(concat!(stringify!($name), "\0").as_bytes());
             if f.is_null() {
