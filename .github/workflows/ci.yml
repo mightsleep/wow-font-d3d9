@@ -2,7 +2,8 @@
 # the shader bytecode against its HLSL, the DLL's imports and exports, the
 # release zip. And the decoder against the exact reference under Wine on
 # lavapipe (nix run .#gate), which wants a Wine prefix in $HOME and so
-# runs outside the sandbox.
+# runs outside the sandbox. And the DLL before Windows' own Direct3D 9, on
+# Windows runners (probe.yml).
 name: ci
 on:
   push:
@@ -30,3 +31,7 @@ jobs:
           persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - run: nix run -L .#gate
+  probe:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/probe.yml

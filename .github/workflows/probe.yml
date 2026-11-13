@@ -1,16 +1,14 @@
-# What a Windows runner's own Direct3D 9 says to the DLL and its decoder
-# (examples/probe.rs). The runner has no GPU, so this is first a question:
-# which kinds of device it has, and whether their CreatePixelShader checks
-# what a real Windows refused before (two constants in an instruction, a
-# 33rd temporary). By hand, and for a pull request that touches the probe,
-# until the answer says whether it can be a job of ci and release.
+# What Windows' own Direct3D 9 says to the DLL and its decoder
+# (examples/probe.rs), as a job of ci and of release. A runner has no GPU,
+# but its devices (WARP, Microsoft Basic Render Driver) are made by the
+# same d3d9.dll as anyone's, and its CreatePixelShader refuses what a real
+# Windows refused before: two constants in an instruction, a 33rd
+# temporary. So: the DLL loads, hooks a device and gets its decoder made.
+# No pixel is looked at, and no vendor's driver is asked.
 name: probe
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/probe.yml
-      - examples/probe.rs
 permissions: {}
 jobs:
   build:
@@ -25,6 +23,7 @@ jobs:
       - run: |
           nix build -L .#probe
           mkdir probe && cp -L result/probe.exe result/d3d9.dll probe/
+          sha256sum probe/d3d9.dll
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: probe
@@ -44,17 +43,15 @@ jobs:
         with:
           name: probe
           path: probe
-      # WOW_FONT_D3D9_DIAG: the proxy's own account of the device in its
-      # log (caps, adapter, shaders by size, d3dcompiler_47's decoder),
-      # which the probe prints.
+      # --strict: exit 1 unless a device with ps_3_0 refuses the two bad
+      # shaders and takes the decoder, from the probe and from the proxy.
+      # WOW_FONT_D3D9_DIAG: the proxy's account of the device in its log,
+      # and the decoder's source through d3dcompiler_47, the stand-in.
       - name: Probe
         shell: pwsh
         working-directory: probe
         env:
           WOW_FONT_D3D9_DIAG: '1'
-        run: ./probe.exe
-      - name: Probe, as a test would run it
-        if: always()
-        shell: pwsh
-        working-directory: probe
-        run: ./probe.exe --strict
+        run: |
+          (Get-FileHash d3d9.dll -Algorithm SHA256).Hash.ToLower()
+          ./probe.exe --strict

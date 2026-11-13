@@ -3,13 +3,20 @@
 # own for players, the zip from `nix build .#release` (the DLL, a sample
 # ini, README, LICENSE) built twice to be sure it is reproducible, and the
 # SHA-256 of both, with a provenance attestation for the DLL and the zip.
+# Not before a Windows runner has loaded the DLL and taken its decoder
+# (probe.yml; the build is reproducible, so that is the DLL released).
 name: release
 on:
   push:
     tags: ['v*']
 permissions: {}
 jobs:
+  probe:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/probe.yml
   release:
+    needs: probe
     runs-on: ubuntu-latest
     permissions:
       contents: write # gh release create

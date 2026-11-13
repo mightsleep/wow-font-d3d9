@@ -33,7 +33,9 @@ behaves like one. I play with it daily all the same.
 - A local AzerothCore in a podman container, and Warmane, where I play
   with it daily: Linux, Wine 11.19, DXVK 3.1.1, an RTX 5060 laptop.
 - Windows 10 with an AMD RX 480 (driver 31.0.21921.1000). One card is
-  the whole Windows test matrix.
+  the whole Windows test matrix. CI adds Windows Server 2022 and 2025
+  without a GPU, where the DLL has to load and Direct3D has to take the
+  shader; nobody looks at a pixel there.
 - Nowhere else. The MSVC build is untested, and any client build other
   than 12340 is unsupported: the proxy reads the client's structures at
   fixed offsets.

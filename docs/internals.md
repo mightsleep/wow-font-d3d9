@@ -188,6 +188,17 @@ than its limit in `flake.nix`. The bench lays glyphs out by the font's
 ascender, not as the client does, so descenders fall off its cells and go
 untested.
 
+`examples/probe.rs` asks Windows itself, which the bench under Wine
+cannot: a 32-bit exe that loads the DLL, makes each kind of device the
+machine has and gives it the decoder, and two shaders a real Windows
+refused before (two constants in one instruction, a 33rd temporary; DXVK
+takes both). CI and the release run it on GitHub's Windows runners
+(`.github/workflows/probe.yml`), whose devices are WARP's: Windows'
+`d3d9.dll` checks a shader there as it does anywhere, so a decoder that
+would be refused outright is caught. It draws nothing, and no vendor's
+driver is asked. `nix run .#probe` runs it under Wine, which shows only
+that it runs.
+
 `nix run .#asm` needs no GPU: for `shaders/decoder.hlsl` (or the `.hlsl`/`.ps3` files named) it prints the instructions, texture
 fetches, flow control, temporaries (vkd3d allows ps_3_0 32) and size;
 `--dump` adds the disassembly. A first check of a change before the bench:
