@@ -307,6 +307,12 @@ const FONTS_MAX: usize = 4096;
 /// Where a header may sit past its CGxFont: after the name at least.
 const HEADER_OFFSETS: std::ops::RangeInclusive<u32> = NAME_LEN..=NAME_LEN + 256;
 
+/// Where g_fonts' terminator is in 12340, from the image's base (0xad9ab0
+/// with Wow.exe at 0x400000, in every session's log). Only where to look
+/// first: the same test decides, so in another build the search runs as
+/// before.
+const G_FONTS_RVA: u32 = 0xad9ab0 - 0x40_0000;
+
 /// IMAGE_SCN_MEM_WRITE: g_fonts changes, so it lies in such a section.
 const SECTION_WRITE: u32 = 0x8000_0000;
 
@@ -369,10 +375,24 @@ fn fonts_list_at(t: u32, prev: u32, first: u32, image: (u32, u32)) -> Option<u32
     None
 }
 
-/// Search Wow.exe's writable sections for g_fonts: every aligned word
-/// pair, a page at a time; the cheap tests on the words come first.
+/// Search Wow.exe's writable sections for g_fonts: where it is in 12340
+/// first, then every aligned word pair, a page at a time (7 to 12 ms on
+/// the client's first upload, 222 once); the cheap tests on the words come
+/// first.
 fn search() -> Option<Registry> {
     let (image, writable) = exe_image()?;
+    if let Some(t) = image.0.checked_add(G_FONTS_RVA)
+        && writable
+            .iter()
+            .any(|&(start, stop)| t >= start && t < stop - 4)
+        && let (Some(prev), Some(first)) = (u32_at(t), u32_at(t + 4))
+        && let Some(header_offset) = fonts_list_at(t, prev, first, image)
+    {
+        return Some(Registry {
+            terminator: t,
+            header_offset,
+        });
+    }
     let mut page = [0u8; 4096];
     for (start, stop) in writable {
         let mut at = start & !4095;
@@ -420,12 +440,12 @@ fn ensure_registry() {
     let fonts = registry_headers().unwrap_or_default();
     let linkoffset = u32_at(r.terminator - 4).unwrap_or(u32::MAX);
     log(&format!(
-        "mem: g_fonts terminator {:#x} (linkoffset {}), header at CGxFont + {}, {} fonts ({} ms)",
+        "mem: g_fonts terminator {:#x} (linkoffset {}), header at CGxFont + {}, {} fonts ({} us)",
         r.terminator,
         linkoffset,
         r.header_offset,
         fonts.len(),
-        t.elapsed().as_millis()
+        t.elapsed().as_micros()
     ));
 }
 
