@@ -2,11 +2,11 @@
 //! cover bytes and its texel words, against the exact nonzero area
 //! (coverage::coverage) of the outline as the record holds it.
 
-use crate::atlas::{Record, cover_cell, encode, texel_words};
+use crate::atlas::{Record, cover_cell, encode, texel_words, texel_words_lists, texel_words_sets};
 use crate::coverage;
 use crate::glyph::{Glyph, P, Quad};
 use crate::reference::{coverage, distance, word_coverage};
-use crate::shapes::{Rng, rect};
+use crate::shapes::{Rng, random, rect};
 
 /// A circle of radius r as eight quadratic arcs, either way round.
 fn circle(c: P, r: f32, ccw: bool) -> Vec<Quad> {
@@ -276,6 +276,88 @@ fn texel_words_match() {
             );
         }
     }
+}
+
+/// A wheel of `teeth` teeth: twice as many lines, a piece each.
+fn wheel(teeth: usize) -> Vec<Quad> {
+    let at = |i: usize| {
+        let a = i as f32 / (2 * teeth) as f32 * std::f32::consts::TAU;
+        let rad = if i.is_multiple_of(2) { 14.0 } else { 9.0 };
+        [16.0 + rad * a.cos(), 16.0 + rad * a.sin()]
+    };
+    (0..2 * teeth)
+        .map(|i| {
+            let (a, b) = (at(i), at(i + 1));
+            [a, [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5], b]
+        })
+        .collect()
+}
+
+/// The words from sets of pieces are the words from lists, in every
+/// width of set that holds the outline (the DLL takes the narrowest), and
+/// texel_words' are them too: the outlines of the other tests, random
+/// ones that cross themselves, wheels of 24 to 640 pieces (every width,
+/// and past the widest), and the test fonts; plain and outlined, on the
+/// texel grid and off it.
+#[test]
+fn texel_words_sets_match_lists() {
+    let mut all = outlines();
+    all.extend((0..40).map(|seed| random(seed, 32.0, 2.0)));
+    all.extend([12, 20, 50, 100, 200, 320].map(|teeth| vec![wheel(teeth)]));
+    all.extend(
+        test_fonts()
+            .into_iter()
+            .flat_map(|(_, glyphs)| glyphs.into_iter().map(|g| g.contours)),
+    );
+    // Outlines checked in sets of 1, 2, 4, 8 and 16 words, and by lists alone.
+    let mut held = [0; 6];
+    for (i, o) in all.iter().enumerate() {
+        for radius in [0.0f32, 1.25] {
+            let r = encode(o, None, radius > 0.0).unwrap();
+            // The outline's larger side over 30 texels of a 34-texel cell.
+            let k = (crate::atlas::GRID - 1.0) / 30.0;
+            let reach = if radius > 0.0 {
+                radius + 0.5 + 1.0 / 32.0
+            } else {
+                0.0
+            };
+            for at in [[2.0, 32.0], [2.37, 31.81]] {
+                let lists = texel_words_lists(&r, 34, 34, at, k, reach);
+                let sets = [
+                    texel_words_sets::<1>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<2>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<4>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<8>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<16>(&r, 34, 34, at, k, reach),
+                ];
+                for (j, s) in sets.iter().enumerate() {
+                    let words = 1 << j;
+                    assert_eq!(
+                        s.is_some(),
+                        r.outline.len() <= 32 * words,
+                        "outline {i}: {} pieces in {words} words",
+                        r.outline.len()
+                    );
+                    if let Some(s) = s {
+                        assert!(
+                            *s == lists,
+                            "outline {i} radius {radius} at {at:?}: sets of {words} words differ"
+                        );
+                    }
+                }
+                assert!(
+                    texel_words(&r, 34, 34, at, k, reach) == lists,
+                    "outline {i} radius {radius} at {at:?}: texel_words differ"
+                );
+                held[sets.iter().filter(|s| s.is_none()).count()] += 1;
+            }
+        }
+    }
+    // held[j]: the narrowest set that holds it has 2^j words; held[5]: none.
+    assert!(
+        held.iter().all(|&n| n > 0),
+        "a width went unchecked: {held:?}"
+    );
 }
 
 /// A digest of every texel word for the test fonts, plain and outlined, at

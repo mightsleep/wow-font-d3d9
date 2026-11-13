@@ -501,14 +501,25 @@ const RUN_MAX: usize = 63;
 /// each), 64 * (backdrop + 4), 512 * mirrored, 1024 * state. WORD_NONE:
 /// coverage 1 if the backdrop is not 0, else 0; WORD_BANDS: past what a
 /// word holds.
+///
+/// By sets of pieces (texel_words_sets) in as few words as hold the
+/// outline, a Latin glyph's in one or two; by lists past 512 pieces.
 pub fn texel_words(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec<[u16; 4]> {
-    let ring = r.texels[0][2] as usize;
-    let n = r.texels[0][3] as usize;
-    let g = 0.5 + 1.0 / 32.0;
-    // Monotone pieces: each within the box of its ends. Up adds area right
-    // of a piece (tests/reference.rs, half_plane).
-    let boxes: Vec<[f32; 4]> = r
-        .outline
+    let sets = match r.outline.len().div_ceil(32) {
+        0..=1 => texel_words_sets::<1>(r, w, h, at, k, reach),
+        2 => texel_words_sets::<2>(r, w, h, at, k, reach),
+        3..=4 => texel_words_sets::<4>(r, w, h, at, k, reach),
+        5..=8 => texel_words_sets::<8>(r, w, h, at, k, reach),
+        9..=16 => texel_words_sets::<16>(r, w, h, at, k, reach),
+        _ => None,
+    };
+    sets.unwrap_or_else(|| texel_words_lists(r, w, h, at, k, reach))
+}
+
+/// Monotone pieces: each within the box of its ends (x low, x high, y
+/// low, y high).
+fn boxes_of(r: &Record) -> Vec<[f32; 4]> {
+    r.outline
         .iter()
         .map(|q| {
             [
@@ -518,23 +529,78 @@ pub fn texel_words(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec
                 q[0][1].max(q[2][1]),
             ]
         })
-        .collect();
+        .collect()
+}
+
+/// An outlined font's squared distances from texel centres to the
+/// outline's chords, as cover_cell has them; none for a plain font.
+fn centre_of(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec<f32> {
+    if reach <= 0.0 {
+        return Vec::new();
+    }
+    let to = |p: P| [p[0] / k + at[0], at[1] - p[1] / k];
+    let placed: Vec<Quad> = r.outline.iter().map(|q| q.map(to)).collect();
+    centre_d2(&chords(&placed, &r.outline), w, h, reach + 1.0)
+}
+
+/// A texel with nothing to read on `side`: the winding there.
+fn word_none(wind: i32, side: usize) -> [u16; 4] {
+    let b = wind.clamp(-3, 3);
+    [
+        0,
+        0,
+        0,
+        64 * (b + 4) as u16 + 512 * side as u16 + 1024 * WORD_NONE,
+    ]
+}
+
+/// The word of a side's runs and backdrop, the ring starting at `ring`.
+fn word_of(runs: &[(usize, usize)], backdrop: i32, right: bool, ring: usize) -> [u16; 4] {
+    let state = if runs.is_empty() {
+        WORD_NONE
+    } else if backdrop.abs() > 3
+        || runs
+            .iter()
+            .any(|&(s, c)| c > RUN_MAX || ring + s >= PACK as usize)
+    {
+        WORD_BANDS
+    } else {
+        WORD_LIST
+    };
+    let mut word = [0u16; 4];
+    let mut top = 0u16;
+    if state == WORD_LIST {
+        for (j, &(s, c)) in runs.iter().enumerate() {
+            word[j] = ((ring + s) * 16 + (c & 15)) as u16;
+            top |= ((c >> 4) as u16) << (2 * j);
+        }
+    }
+    let b = if state == WORD_BANDS {
+        0
+    } else {
+        backdrop.clamp(-3, 3)
+    };
+    word[3] = top + 64 * (b + 4) as u16 + 512 * right as u16 + 1024 * state;
+    word
+}
+
+/// texel_words by lists of pieces, every test once a piece and a texel:
+/// what texel_words_sets is checked against (tests/atlas_tests.rs), and
+/// the way for an outline of more pieces than its sets hold.
+pub fn texel_words_lists(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec<[u16; 4]> {
+    let ring = r.texels[0][2] as usize;
+    let n = r.texels[0][3] as usize;
+    let g = 0.5 + 1.0 / 32.0;
+    // Up adds area right of a piece (tests/reference.rs, half_plane).
+    let boxes = boxes_of(r);
     let up: Vec<i32> = r
         .outline
         .iter()
         .map(|q| if q[2][1] > q[0][1] { 1 } else { -1 })
         .collect();
     let mut words = Vec::with_capacity((w * h) as usize);
-    // An outlined font's squared distances from texel centres to the
-    // outline's chords, as cover_cell has them.
     let cut = reach + 1.0;
-    let centre = if reach > 0.0 {
-        let to = |p: P| [p[0] / k + at[0], at[1] - p[1] / k];
-        let placed: Vec<Quad> = r.outline.iter().map(|q| q.map(to)).collect();
-        centre_d2(&chords(&placed, &r.outline), w, h, cut)
-    } else {
-        Vec::new()
-    };
+    let centre = centre_of(r, w, h, at, k, reach);
     // One set of buffers for the cell: a texel's lists are short and many.
     let mut s = Scratch::default();
     for ty in 0..h {
@@ -615,13 +681,7 @@ pub fn texel_words(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec
                 // nothing is near.
                 let none = |side: usize| ends[side] == 0 && (wind[side] != 0 || s.near.is_empty());
                 if let Some(side) = [0, 1].into_iter().find(|&side| none(side)) {
-                    let b = wind[side].clamp(-3, 3);
-                    words.push([
-                        0,
-                        0,
-                        0,
-                        64 * (b + 4) as u16 + 512 * side as u16 + 1024 * WORD_NONE,
-                    ]);
+                    words.push(word_none(wind[side], side));
                     continue;
                 }
             }
@@ -638,38 +698,13 @@ pub fn texel_words(r: &Record, w: u32, h: u32, at: P, k: f32, reach: f32) -> Vec
             } else {
                 (&s.runs_l, back_l, false)
             };
-            let state = if runs.is_empty() {
-                WORD_NONE
-            } else if backdrop.abs() > 3
-                || runs
-                    .iter()
-                    .any(|&(s, c)| c > RUN_MAX || ring + s >= PACK as usize)
-            {
-                WORD_BANDS
-            } else {
-                WORD_LIST
-            };
-            let mut word = [0u16; 4];
-            let mut top = 0u16;
-            if state == WORD_LIST {
-                for (j, &(s, c)) in runs.iter().enumerate() {
-                    word[j] = ((ring + s) * 16 + (c & 15)) as u16;
-                    top |= ((c >> 4) as u16) << (2 * j);
-                }
-            }
-            let b = if state == WORD_BANDS {
-                0
-            } else {
-                backdrop.clamp(-3, 3)
-            };
-            word[3] = top + 64 * (b + 4) as u16 + 512 * right as u16 + 1024 * state;
-            words.push(word);
+            words.push(word_of(runs, backdrop, right, ring));
         }
     }
     words
 }
 
-/// texel_words' buffers, kept across the texels of a cell.
+/// texel_words_lists' buffers, kept across the texels of a cell.
 #[derive(Default)]
 struct Scratch {
     fill_rows: Vec<usize>,
@@ -682,7 +717,7 @@ struct Scratch {
     runs_l: Vec<(usize, usize)>,
 }
 
-/// One side's runs for a texel (texel_words), into `s.runs`: of the row's
+/// One side's runs for a texel (texel_words_lists), into `s.runs`: of the row's
 /// pieces, those across E or beyond it (left, mirrored right) ending within
 /// its rows are needed, those beyond it across all its rows are behind;
 /// the near ones are needed too unless E is wholly inside the fill. The
@@ -792,4 +827,304 @@ fn side_runs(
         .map(|&j| up[j])
         .sum();
     (runs.iter().map(|r| r.1).sum(), backdrop)
+}
+
+// ---- texel_words over sets of pieces ----------------------------------
+
+/// A set of an outline's pieces, a bit each, in W words of 32: the DLL's
+/// word, and the host's tests run the same.
+#[derive(Clone, Copy)]
+struct Set<const W: usize>([u32; W]);
+
+impl<const W: usize> Set<W> {
+    const NONE: Self = Set([0; W]);
+    /// Pieces at most, also by what a gap's key holds (side_sets).
+    const MAX: usize = if 32 * W < 512 { 32 * W } else { 512 };
+
+    /// The boxes that pass `test`.
+    #[inline(always)]
+    fn of(boxes: &[[f32; 4]], test: impl Fn(&[f32; 4]) -> bool) -> Self {
+        let mut s = Self::NONE;
+        for (j, b) in boxes.iter().enumerate() {
+            s.0[j / 32] |= (test(b) as u32) << (j % 32);
+        }
+        s
+    }
+
+    #[inline(always)]
+    fn and(self, o: Self) -> Self {
+        Set(std::array::from_fn(|i| self.0[i] & o.0[i]))
+    }
+
+    #[inline(always)]
+    fn or(self, o: Self) -> Self {
+        Set(std::array::from_fn(|i| self.0[i] | o.0[i]))
+    }
+
+    /// Those of self not in `o`.
+    #[inline(always)]
+    fn less(self, o: Self) -> Self {
+        Set(std::array::from_fn(|i| self.0[i] & !o.0[i]))
+    }
+
+    #[inline(always)]
+    fn any(self) -> bool {
+        self.0.iter().any(|&w| w != 0)
+    }
+
+    fn count(self) -> i32 {
+        self.0.iter().map(|w| w.count_ones() as i32).sum()
+    }
+
+    /// The up pieces less the down ones.
+    #[inline(always)]
+    fn wind(self, up: Self) -> i32 {
+        if self.any() {
+            2 * self.and(up).count() - self.count()
+        } else {
+            0
+        }
+    }
+
+    /// Each piece, in order.
+    #[inline(always)]
+    fn each(self, mut f: impl FnMut(usize)) {
+        for (i, mut w) in self.0.into_iter().enumerate() {
+            while w != 0 {
+                f(32 * i + w.trailing_zeros() as usize);
+                w &= w - 1;
+            }
+        }
+    }
+
+    /// Pieces lo..hi.
+    fn span(lo: usize, hi: usize) -> Self {
+        Set(std::array::from_fn(|i| {
+            let (l, h) = (lo.max(32 * i), hi.min(32 * i + 32));
+            if l < h {
+                (!0u32 >> (32 - (h - l))) << (l - 32 * i)
+            } else {
+                0
+            }
+        }))
+    }
+
+    /// Pieces a, a + 1, .. (c of them) round a ring of n.
+    fn ring(a: usize, c: usize, n: usize) -> Self {
+        if a + c <= n {
+            Self::span(a, a + c)
+        } else {
+            Self::span(a, n).or(Self::span(0, a + c - n))
+        }
+    }
+}
+
+/// A side's runs (start, count), how many, what they read, the backdrop.
+struct Side {
+    runs: [(usize, usize); RUNS],
+    m: usize,
+    cost: usize,
+    backdrop: i32,
+}
+
+/// side_runs with the row's and the column's sets made: `f` the row's
+/// pieces, `spans` those across all E's rows, `beyond` and `past` the
+/// column's on the side asked and on the other, `near` the texel's.
+#[inline]
+fn side_sets<const W: usize>(
+    f: Set<W>,
+    spans: Set<W>,
+    beyond: Set<W>,
+    past: Set<W>,
+    near: Set<W>,
+    up: Set<W>,
+    n: usize,
+) -> Side {
+    let behind = f.and(beyond).and(spans);
+    let mut needed = f.less(past).less(behind);
+    if needed.any() || behind.wind(up) == 0 {
+        needed = needed.or(near);
+    }
+    // The three largest gaps, larger first, ties to the first: a key each
+    // (a mark, the gap, the piece before it from the top, the piece
+    // after; 9 bits each, hence Set::MAX), the largest three kept by min
+    // and max: no branch on what the outline is.
+    const MARK: u32 = 1 << 27;
+    let mut top = [0u32; RUNS];
+    let mut gap = |p: usize, q: usize, gap: usize| {
+        let mut cur = MARK | (gap as u32) << 18 | (511 - p as u32) << 9 | q as u32;
+        for slot in top.iter_mut() {
+            let hi = (*slot).max(cur);
+            cur = (*slot).min(cur);
+            *slot = hi;
+        }
+    };
+    let (mut first, mut p) = (usize::MAX, 0);
+    needed.each(|q| {
+        if first == usize::MAX {
+            first = q;
+        } else {
+            gap(p, q, q - p - 1);
+        }
+        p = q;
+    });
+    let mut runs = [(0, 0); RUNS];
+    let mut m = 0;
+    if first != usize::MAX {
+        // And the one round the ring's end.
+        gap(p, first, first + n - p - 1);
+        m = top.iter().filter(|&&t| t != 0).count();
+        // In the ring's order (the piece before, then the one after), the
+        // empty ones last.
+        let mut by = top.map(|t| {
+            if t == 0 {
+                u32::MAX
+            } else {
+                (511 - (t >> 9 & 511)) << 9 | t & 511
+            }
+        });
+        let pair = |a: u32, b: u32| (a.min(b), a.max(b));
+        (by[0], by[1]) = pair(by[0], by[1]);
+        (by[1], by[2]) = pair(by[1], by[2]);
+        (by[0], by[1]) = pair(by[0], by[1]);
+        // A run from after the gap before it to the piece before its own.
+        for c in 0..m {
+            let a = (by[if c == 0 { m - 1 } else { c - 1 }] & 511) as usize;
+            let e = (by[c] >> 9) as usize;
+            runs[c] = (a, if e >= a { e - a } else { e + n - a } + 1);
+        }
+    }
+    // Seldom any behind: the runs' sets only then.
+    let mut outside = behind;
+    if behind.any() {
+        for &(a, c) in &runs[..m] {
+            outside = outside.less(Set::ring(a, c, n));
+        }
+    }
+    Side {
+        runs,
+        m,
+        cost: runs[..m].iter().map(|r| r.1).sum(),
+        backdrop: outside.wind(up),
+    }
+}
+
+/// texel_words_lists' words from sets of pieces: a piece's tests against
+/// E are one on its column and one on its row, so each column and each
+/// row gets its sets once and a texel takes them with a few ANDs. None
+/// for an outline of more pieces than W words (or a gap's key) hold.
+pub fn texel_words_sets<const W: usize>(
+    r: &Record,
+    w: u32,
+    h: u32,
+    at: P,
+    k: f32,
+    reach: f32,
+) -> Option<Vec<[u16; 4]>> {
+    let ring = r.texels[0][2] as usize;
+    let n = r.texels[0][3] as usize;
+    if n != r.outline.len() || n > Set::<W>::MAX {
+        return None;
+    }
+    let g = 0.5 + 1.0 / 32.0;
+    let boxes = boxes_of(r);
+    // Up adds area right of a piece (tests/reference.rs, half_plane).
+    let mut up = Set::<W>::NONE;
+    for (j, q) in r.outline.iter().enumerate() {
+        up.0[j / 32] |= ((q[2][1] > q[0][1]) as u32) << (j % 32);
+    }
+    let mut words = Vec::with_capacity((w * h) as usize);
+    let cut = reach + 1.0;
+    let centre = centre_of(r, w, h, at, k, reach);
+    // Per column: T's x, the pieces left of E and right of it, and those
+    // whose box is within the reach of T's columns.
+    struct Column<const W: usize> {
+        t: [f32; 2],
+        left: Set<W>,
+        right: Set<W>,
+        near: Set<W>,
+    }
+    let columns: Vec<Column<W>> = (0..w)
+        .map(|tx| {
+            let t = [(tx as f32 - at[0]) * k, (tx as f32 + 1.0 - at[0]) * k];
+            let fx = [t[0] - g * k, t[1] + g * k];
+            Column {
+                t,
+                left: Set::of(&boxes, |b| b[1] <= fx[0]),
+                right: Set::of(&boxes, |b| b[0] >= fx[1]),
+                near: if reach > 0.0 {
+                    Set::of(&boxes, |b| {
+                        (t[0] - b[1]).max(b[0] - t[1]).max(0.0) <= reach * k
+                    })
+                } else {
+                    Set::NONE
+                },
+            }
+        })
+        .collect();
+    for ty in 0..h {
+        // Per row: the pieces across the fill's rows of E (not
+        // horizontal), those across all of them, those within the reach.
+        let (t2, t3) = ((at[1] - ty as f32 - 1.0) * k, (at[1] - ty as f32) * k);
+        let fy = [t2 - g * k, t3 + g * k];
+        let f: Set<W> = Set::of(&boxes, |b| {
+            b[2] != b[3] && b[3] > t2 - g * k && b[2] < t3 + g * k
+        });
+        let spans: Set<W> = Set::of(&boxes, |b| b[2] <= fy[0] && b[3] >= fy[1]);
+        let near_rows: Set<W> = if reach > 0.0 {
+            Set::of(&boxes, |b| b[2] - t3 <= reach * k && t2 - b[3] <= reach * k)
+        } else {
+            Set::NONE
+        };
+        for tx in 0..w {
+            let col = &columns[tx as usize];
+            let t = [col.t[0], col.t[1], t2, t3];
+            // The near pieces as texel_words_lists has them. The gap is
+            // no less than its x part and the bound no more than the
+            // reach, so the column's set loses none.
+            let mut near = Set::<W>::NONE;
+            if reach > 0.0 {
+                let gap = |b: &[f32; 4]| {
+                    let dx = (t[0] - b[1]).max(b[0] - t[1]).max(0.0);
+                    let dy = (t[2] - b[3]).max(b[2] - t[3]).max(0.0);
+                    (dx * dx + dy * dy).sqrt()
+                };
+                let dc = centre[(ty * w + tx) as usize];
+                let worst = if dc < cut * cut {
+                    (dc.sqrt() + FLAT_TOL + std::f32::consts::FRAC_1_SQRT_2) * k
+                } else {
+                    f32::MAX
+                };
+                let bound = worst.min(reach * k);
+                near_rows.and(col.near).each(|j| {
+                    near.0[j / 32] |= ((gap(&boxes[j]) <= bound) as u32) << (j % 32);
+                });
+            }
+            // Most texels need nothing: no piece across E, and on one side
+            // none that ends within its rows (left first).
+            let sides = [f.and(col.left), f.and(col.right)];
+            if !f.less(col.left).less(col.right).any() {
+                let none =
+                    |s: Set<W>| !s.less(spans).any() && (s.and(spans).wind(up) != 0 || !near.any());
+                if let Some(side) = (0..2).find(|&i| none(sides[i])) {
+                    words.push(word_none(sides[side].and(spans).wind(up), side));
+                    continue;
+                }
+            }
+            // The left's runs, and the right's only if it may read fewer.
+            let l = side_sets(f, spans, col.left, col.right, near, up, n);
+            let (side, right) = if l.cost > 0 {
+                let r = side_sets(f, spans, col.right, col.left, near, up, n);
+                if r.cost < l.cost {
+                    (r, true)
+                } else {
+                    (l, false)
+                }
+            } else {
+                (l, false)
+            };
+            words.push(word_of(&side.runs[..side.m], side.backdrop, right, ring));
+        }
+    }
+    Some(words)
 }
