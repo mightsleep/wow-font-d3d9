@@ -151,7 +151,7 @@ fn emit(dev: Ptr) {
         ch,
         1.0 / ch,
         1.0 / settings::GAMMA.get(),
-        0.0,
+        settings::GAMMA.get(),
         f32::from_bits(EDGE.load(Relaxed)),
         0.0,
         0.0,

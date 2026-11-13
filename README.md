@@ -1,23 +1,64 @@
-# wow-font-d3d9
+<h1 align="center">wow-font-d3d9</h1>
+<p align="center">Vector text for WoW 3.3.5a. Experimental.</p>
+<p align="center">
+  <a href="#install">install</a> ·
+  <a href="#will-it-get-me-banned">bans</a> ·
+  <a href="#what-is-wrong-with-it">what is wrong with it</a> ·
+  <a href="docs/internals.md">internals</a> ·
+  <a href="docs/design.md">design</a>
+</p>
+<p align="center">
+  <a href="https://github.com/mightsleep/wow-font-d3d9/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/mightsleep/wow-font-d3d9?style=for-the-badge&labelColor=313244&color=a6e3a1"></a>
+  <a href="https://github.com/mightsleep/wow-font-d3d9/actions/workflows/ci.yml?query=branch%3Amain"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/mightsleep/wow-font-d3d9/ci.yml?branch=main&style=for-the-badge&labelColor=313244&label=ci"></a>
+  <img alt="client 3.3.5a (12340)" src="https://img.shields.io/badge/client-3.3.5a%20(12340)-fab387?style=for-the-badge&labelColor=313244">
+  <img alt="status experimental" src="https://img.shields.io/badge/status-experimental-f38ba8?style=for-the-badge&labelColor=313244">
+  <a href="#will-it-get-me-banned"><img alt="bans 0 so far" src="https://img.shields.io/badge/bans-0%20so%20far-94e2d5?style=for-the-badge&labelColor=313244"></a>
+  <img alt="license GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-b4befe?style=for-the-badge&labelColor=313244">
+</p>
 
-Vector text for WoW 3.3.5a.
+A proxy `d3d9.dll` for the World of Warcraft 3.3.5a client (build 12340).
+The client rasterises each glyph once into a small bitmap and draws text
+from that, so text the UI or an addon scales up goes soft. The proxy
+keeps each glyph's outline in textures of its own and swaps in a pixel
+shader that works out how much of every pixel the outline covers. Edges
+and corners stay sharp at any scale. The client still picks the fonts,
+sizes, colours and layout; only how the letters are filled changes.
 
-A proxy `d3d9.dll` for the World of Warcraft 3.3.5a client (build 12340)
-that draws the game's text from vector outlines. The client rasterises
-each glyph with FreeType into a 256x256 texture (a glyph cache) and draws
-text from there; the proxy keeps each glyph's outline in textures of its
-own beside the cache and swaps in a pixel shader that integrates the
-outline over every pixel. Text magnified by the UI or by addons stays
-sharp at the edges and corners, where the client's own bitmap goes soft.
+So this is a font rasteriser living inside a Direct3D 9 pixel shader, in
+a client from 2010, written by one person. It is a first version and
+behaves like one. I play with it daily all the same.
 
-This is a one-person project at its first version. It has been played on
-Linux with Wine 11.19 and DXVK 3.1.1, and run on Windows 10 with an
-AMD RX 480 (driver 31.0.21921.1000); other GPUs and drivers on Windows
-are untested, as is the MSVC build. The client's structures are read at fixed offsets, so
-any build other than 12340 is unsupported.
+## Where it has run
 
-Only the look of the text changes: the client still picks the fonts,
-sizes, colours and layout.
+- A local AzerothCore in a podman container, and Warmane, where I play
+  with it daily: Linux, Wine 11.19, DXVK 3.1.1, an RTX 5060 laptop.
+- Windows 10 with an AMD RX 480 (driver 31.0.21921.1000). One card is
+  the whole Windows test matrix. CI adds Windows Server 2022 and 2025
+  without a GPU, where the DLL has to load and Direct3D has to take the
+  shader; nobody looks at a pixel there.
+- Nowhere else. The MSVC build is untested, and any client build other
+  than 12340 is unsupported: the proxy reads the client's structures at
+  fixed offsets.
+
+## Will it get me banned
+
+I play with it on Warmane daily and have not been banned (yet), which
+is a sample of one. I see no reason why it should happen:
+
+- It patches no code, in Wow.exe, in the real `d3d9.dll` or anywhere. It
+  forwards every call and hooks Direct3D objects by pointing them at a
+  patched copy of their vtable. Nothing outside Direct3D 9 is hooked.
+- It reads the client's font tables through `ReadProcessMemory` on its
+  own process and writes nothing into the client's memory but those
+  vtable pointers.
+- It opens no sockets, and writes files only next to Wow.exe (a log, a
+  cache, see below).
+
+What it cannot hide is that it is a DLL in the game folder, so it shows
+in the process's module list. Private servers run anti-cheat (Warden)
+that may look at that list, and whether a server minds a font renderer
+is the server's call. Your account, your risk. `WOW_FONT_D3D9=0` makes
+it forward calls and do nothing else.
 
 ## Install
 
@@ -56,7 +97,7 @@ place.
 
 | key       | default | meaning |
 |-----------|---------|---------|
-| `gamma`   | 1.5     | alpha = coverage^(1/gamma) |
+| `gamma`   | 1.5     | alpha = coverage^(1/gamma) for white text, 1 - (1 - coverage)^(1/gamma) for black (shadows, outlines), between by the colour's luma |
 | `outline` | 0.25    | pixels added to the client's outline radius |
 | `v2`      | 1       | 0: the client's bitmaps for every font, as without the proxy |
 | `words`   | 1       | 0: magnified text reads the bands, not the texel words; 2: the words' path in colour |
@@ -70,196 +111,76 @@ Environment variables:
 | `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
 | `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
 
-## Reporting problems
+## What is wrong with it
 
-Open an [issue](https://github.com/mightsleep/wow-font-d3d9/issues) with
+Known, and not fixed:
+
+- It costs GPU time: half a millisecond of a frame at the median in my
+  sessions, 0.2 to 1.3 ms most of the time (RTX 5060 laptop GPU under
+  DXVK), about an eighth of the frame. Text with a shadow pays twice,
+  since the client draws the shadow as the same letters again in black.
+- The first time a font shows up at a size, its cells are worked out on
+  the game's thread: hitches of up to some 20 ms were seen, once. After
+  that they come from a cache on disk, until the next update of the DLL
+  changes the encoder and the cache starts over.
+- An outline's alpha is a ramp over the distance to the glyph, which is
+  the true area only for a straight edge wider than a pixel. Outlined
+  text drawn at half size has about one pixel in seven off by more than
+  16/255. At full size and above it is under 1.2 %.
+- Black text drawn exactly 1:1 takes its coverage back out of a byte
+  kept for white text, and loses up to 16/255 on some edge pixels.
+- Monochrome (pixel) fonts, text drawn without a vs_3_0 vertex shader
+  and fonts whose file the proxy cannot find stay the client's bitmaps.
+- On Windows' own Direct3D 9 the decoder (about 1450 ps_3_0
+  instructions) has run on that one AMD card. If a device refuses it,
+  the log says why (lines starting `diag:`) and Microsoft's
+  `d3dcompiler_47` compiles it instead, about 11 s at start; if that is
+  refused too, text stays the client's.
+- Other mods that redraw the game's text (Lexara, TweakWoW2's HD Font,
+  awesome_wotlk's MSDF mode) take the same draws. Use one at a time;
+  nothing has been tried together with them.
+
+Unknown ones are likelier than not. Open an
+[issue](https://github.com/mightsleep/wow-font-d3d9/issues) with
 `wow-font-d3d9.log`, your OS, GPU and driver (and Wine and DXVK versions
 on Linux), a screenshot, and the addons that draw the text in question.
-If text looks wrong, a screenshot with `v2 = 0` beside one with `v2 = 1`
-shows whether it is the proxy's.
+A screenshot with `v2 = 0` beside one with `v2 = 1` shows whether the
+problem is the proxy's.
 
-## What it does, and what it does not
+## How it does it
 
-- It forwards every call to the real `d3d9.dll` and hooks objects by
-  pointing them at a patched copy of their vtable. No code in Wow.exe, in
-  the real `d3d9.dll` or anywhere else is patched, and nothing outside
-  Direct3D 9 is hooked.
-- It reads the client's font headers (CGxFont) and glyph lists through
-  `ReadProcessMemory` on its own process, where a wrong address fails the
-  read and nothing else, and the stack of the thread that calls its
-  `LockRect` hook. It writes nothing into the client's memory but the
-  vtable pointers of the objects it hooks; the glyph caches keep the
-  client's bitmaps.
-- It writes files only next to Wow.exe: `wow-font-d3d9.log`, encoded cells
-  in `Cache\wow-font-d3d9\`. It reads `wow-font-d3d9.ini` there if present.
-- It opens no sockets.
-- Like any DLL in the game folder, it shows in the process's module list.
-  Private servers run anti-cheat (Warden) that may look at loaded modules;
-  whether one minds a font renderer is up to the server. Use it at your
-  own risk.
+1. **Whose glyphs.** The client keeps every font it makes in one list.
+   The proxy finds the list in the client's memory and, whenever the
+   client uploads a glyph cache, reads which font it belongs to and which
+   glyph sits in which cell.
+2. **Outlines.** It reads the font file itself (from the game folder or
+   the client's MPQ archives), cuts each glyph into monotone quadratic
+   pieces on a 16-bit grid, unites contours that overlap, and stores the
+   pieces one a texel in a float texture.
+3. **Per texel.** Beside each of the client's glyph caches it keeps a
+   byte per texel (the exact coverage at 1:1) and a word naming the few
+   pieces a magnified pixel there can touch.
+4. **Per pixel.** While a glyph cache is bound, the device gets the
+   proxy's pixel shader in place of the client's. Text drawn 1:1 reads
+   the byte. Anything else integrates the outline over the pixel's box:
+   Green's theorem, one root formula without cases, two-point Gauss,
+   which is exact for the cubics that come up. No sampling.
+5. **Once.** The bytes, words and outlines go to a cache on disk, so a
+   session after the first only reads them.
 
-Set `WOW_FONT_D3D9=0` and it only forwards.
-
-## How it works
-
-The tricks, with the reasoning and the measurements behind them, are in
-[docs/design.md](docs/design.md).
-
-**Which font.** While the client fills a glyph cache it has the cache's
-TEXTURECACHE on its stack, a few frames above the proxy's `LockRect` hook.
-The proxy finds it there (at depths it remembers from session to session)
-and follows it to the CGxFont header: font name, pixel size, outline
-flags, and the list of glyphs in each cell (`src/fonts.rs`,
-`src/mem.rs`). The font file is looked up by that name under the game
-folder, then in `WOW_FONT_D3D9_FONTS`, then in the client's MPQ archives
-(`src/fontfile.rs`, `src/mpq.rs`).
-
-**Cells.** At each `UnlockRect` of a glyph cache, every cell the client
-changed is checked against its glyph (the alpha the client just wrote must
-hold the glyph's bitmap); the cells that check out are drawn from the
-font's outlines instead (`src/texture.rs`, `src/payload.rs`). The client's
-texture keeps its bitmaps: the proxy builds textures of its own beside
-each glyph cache (`src/v2.rs`, `src/atlas.rs`):
-
-- the atlas, one for every font and size: each glyph's outline as
-  monotone quadratic pieces on a 16-bit grid over the font's box, sorted
-  into horizontal bands, one piece a texel (A32B32G32R32F);
-- the column map: per cache column and row of cells, the glyph's record
-  in the atlas and where its grid starts;
-- the cover: a byte per cache texel, 0 empty and 255 full where no piece
-  reaches in, else the texel's exact coverage after the gamma, or a marker
-  for a cell the proxy did not take; an outlined font gets a second byte
-  for the outline;
-- the texel words: per cache texel, up to three runs of the glyph's
-  pieces that can touch a pixel centred in it, with the winding left of
-  them, so magnified text reads a few pieces instead of whole bands.
-
-**Decoder.** While a glyph cache is on stage 0 and the client's vertex
-shader is a vs_3_0, the device gets the decoder (`shaders/decoder.hlsl`,
-ps_3_0) in place of the client's pixel shader, with the proxy's textures
-on stages 1 to 4 and its constants in c200 to c203. A pixel on a pure
-texel, or drawn 1:1, is done after the cover byte. Otherwise the decoder
-integrates the glyph over the pixel's box from the pieces in reach, in
-the same f32 arithmetic as the CPU's reference, and takes the distance to
-them for an outline. A cell marked as not the proxy's draws the client's
-bitmap.
-The texture coordinate is interpolated at the centroid: with multisampling
-(the client's `gxMultisample`) a pixel a glyph's quad only partly covers
-is shaded at its centre, which can lie past the quad's edge, and the
-coordinate carried there reads the next glyph's cell. The client's own
-shader does just that, which shows as faint slivers of other glyphs next
-to text; the decoder draws without them.
-The swap happens in the state setters (`SetTexture`, `SetPixelShader`,
-`SetVertexShader`), which compare against the state the device holds, so
-draw calls pass through untouched (`src/phi.rs`).
-
-**Disk cache.** Each cell's cover bytes and texel words go to
-`Cache\wow-font-d3d9\`, one file per font file, size and settings, keyed
-by a hash of the font's table directory and of the encoder's source; the
-atlas records are cheap enough to encode again each session. Records are appended with an
-Adler-32 each; a file cut short by a crash is truncated to its last good
-record on the next start (`src/cache.rs`, `src/record.rs`).
-
-## Limits
-
-- Monochrome (pixel) fonts stay the client's bitmaps.
-- On Windows' own Direct3D 9 the decoder (about 1500 ps_3_0 instructions)
-  has run on one AMD GPU only. If a device refuses it, the log says why
-  (lines starting `diag:`) and Microsoft's `d3dcompiler_47` compiles it
-  instead (about 11 s at start); if that is refused too, text stays the
-  client's.
-- Text drawn without a vs_3_0 vertex shader stays the client's.
-- A font whose file the proxy cannot find stays the client's.
-- Other mods that redraw the game's text (Lexara, TweakWoW2's HD Font,
-  awesome_wotlk's MSDF mode) take the same draws; use one at a time.
-  Nothing has been tried together with them.
-- Build 12340 only, as above.
-
-## Cost
-
-Measured with `WOW_FONT_D3D9_TRACE=1` on an RTX 5060 laptop GPU and a
-Ryzen AI 5 340, Wine 11.19 and DXVK 3.1.1, in towns and menus:
-
-- GPU: 0.14 to 0.57 ms of text per frame, 1.6 to 11.5 % of the frame;
-  with Chinese text on screen, 0.87 ms of a 3.2 ms frame.
-- CPU, per frame: 3 to 8 us in the texture bind hook.
-- A font's first upload with nothing on disk: up to 17.5 ms (48 Chinese
-  and 109 Latin cells, and the atlas growing). A 32 px cell's cover and
-  texel words take 0.1 to 0.4 ms of CPU; from disk they are only read.
-- Finding a font: 2 to 60 us per upload; the first in a session, up to
-  0.35 ms.
-
-Accuracy against an exact reference (the glyph's area in each pixel's
-box under the nonzero rule, from chords within 1/256 of the box),
-Roboto at 32 px with an outline, texels off by more than 16/255: 0 % at
-1x, 0.061 % at 2x, 0.18 % at 4x (`nix run .#bench`, Mesa lavapipe).
+The long version, with the costs, the build and the tests, is in
+[docs/internals.md](docs/internals.md). The tricks, numbered, each with
+why it holds and what it bought, are in [docs/design.md](docs/design.md).
 
 ## Building
 
-With Nix:
-
     nix build            # result/d3d9.dll
-    nix build .#release  # the release zip: DLL, sample ini, README, LICENSE
-    nix flake check      # build, tests, shader bytecode, the DLL's imports and exports, the zip
-    nix develop          # cargo build --release lands in target/i686-pc-windows-gnu/release
+    nix flake check      # build, lints, tests, shader bytecode, the DLL's imports and exports
 
-Releases come from a tag `vX.Y.Z` (`.github/workflows/release.yml`),
-which builds the zip twice and publishes it with its SHA-256. The build
-is reproducible: `nix build github:mightsleep/wow-font-d3d9/vX.Y.Z#release`
-gives the same bytes.
-
-The DLL is built with stable Rust for `i686-pc-windows-gnu` and linked by
-nixpkgs' mingw-w64 gcc against the runtime libraries Rust ships for that
-target. It imports only system DLLs.
-
-Without Nix on Linux:
-
-    rustup target add i686-pc-windows-gnu
-    cargo build --release --target i686-pc-windows-gnu
-
-with an `i686-w64-mingw32-gcc` as the linker
-(`CARGO_TARGET_I686_PC_WINDOWS_GNU_LINKER`). A gcc built with the
-mcfgthreads thread model (nixpkgs', some distributions') makes the DLL
-depend on `libmcfgthread-1.dll`; put the `rust-mingw` component's
-`lib/rustlib/i686-pc-windows-gnu/lib/self-contained` first with
-`RUSTFLAGS=-L native=...` to avoid that.
-
-On Windows with Visual Studio (untested):
-
-    rustup target add i686-pc-windows-msvc
-    cargo build --release --target i686-pc-windows-msvc
-
-The shaders are compiled with vkd3d 2.1 and committed as bytecode
-(`shaders/*.ps3`, `*.vs3`); after changing an `.hlsl`, `nix run .#shaders`
-writes them again and `nix flake check` fails until they match.
-
-## Tests and bench
-
-`tests/` is a crate of its own that runs on the host: `cargo test-host`
-from the repository's root, in the dev shell or out of it (an alias in
-`.cargo/config.toml`; `WOW_FONT_TEST_FONTS`, font files with `:` between,
-adds the texel words' checks on real fonts). It checks the encoder's
-invariants against brute force (area under the nonzero rule; the atlas
-records through a CPU copy of the decoder, `tests/reference.rs`, the
-cover bytes and the texel words against the exact coverage) and
-that the disk cache's records read back what was written and survive a
-cut or a damaged byte.
-
-`nix run .#bench -- --font FILE:PX:OUTLINE [--lavapipe]` draws glyph
-caches built by the proxy's encoder through Direct3D 9 under Wine with
-DXVK, the road the game's text takes, and compares every pixel with the
-exact reference. `--ps NAME=FILE` adds a compiled shader to compare;
-`--lavapipe` runs on the CPU in a virtual X server. See
-`examples/bench.rs` for the rest of its arguments. `nix run .#gate` is
-the same as a test, the one CI runs: Roboto with and without an outline
-on lavapipe, failing when a scale has more texels off by over 16/255
-than its limit in `flake.nix`.
-
-`nix run .#asm` needs no GPU: for `shaders/decoder.hlsl` (or the `.hlsl`/`.ps3` files named) it prints the instructions, texture
-fetches, flow control, temporaries (vkd3d allows ps_3_0 32) and size;
-`--dump` adds the disassembly. A first check of a change before the bench:
-the counts are static (a loop counts once), and the decoder waits on
-fetches more than on arithmetic, so fewer instructions need not be faster.
+Releases are built from a tag and are reproducible:
+`nix build github:mightsleep/wow-font-d3d9/vX.Y.Z#release` gives the
+same bytes as the download. Building without Nix, and the tests and the
+bench, are in [docs/internals.md](docs/internals.md).
 
 ## Credits
 

@@ -2,11 +2,13 @@
 //! cover bytes and its texel words, against the exact nonzero area
 //! (coverage::coverage) of the outline as the record holds it.
 
-use crate::atlas::{Record, cover_cell, encode, texel_words};
+use crate::atlas::{
+    Record, cell, cover_cell, encode, reach_of, texel_words, texel_words_lists, texel_words_sets,
+};
 use crate::coverage;
 use crate::glyph::{Glyph, P, Quad};
 use crate::reference::{coverage, distance, word_coverage};
-use crate::shapes::{Rng, rect};
+use crate::shapes::{Rng, random, rect};
 
 /// A circle of radius r as eight quadratic arcs, either way round.
 fn circle(c: P, r: f32, ccw: bool) -> Vec<Quad> {
@@ -278,9 +280,94 @@ fn texel_words_match() {
     }
 }
 
+/// A wheel of `teeth` teeth: twice as many lines, a piece each.
+fn wheel(teeth: usize) -> Vec<Quad> {
+    let at = |i: usize| {
+        let a = i as f32 / (2 * teeth) as f32 * std::f32::consts::TAU;
+        let rad = if i.is_multiple_of(2) { 14.0 } else { 9.0 };
+        [16.0 + rad * a.cos(), 16.0 + rad * a.sin()]
+    };
+    (0..2 * teeth)
+        .map(|i| {
+            let (a, b) = (at(i), at(i + 1));
+            [a, [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5], b]
+        })
+        .collect()
+}
+
+/// The words from sets of pieces are the words from lists, in every
+/// width of set that holds the outline (the DLL takes the narrowest), and
+/// texel_words' are them too: the outlines of the other tests, random
+/// ones that cross themselves, wheels of 24 to 640 pieces (every width,
+/// and past the widest), a stem a texel wide, and the test fonts; plain
+/// and outlined, on the texel grid, off it and at the cell's edge.
+#[test]
+fn texel_words_sets_match_lists() {
+    let mut all = outlines();
+    all.extend((0..40).map(|seed| random(seed, 32.0, 2.0)));
+    all.extend([12, 20, 50, 100, 200, 320].map(|teeth| vec![wheel(teeth)]));
+    // A stem a texel wide at the cell's edge: every piece of a row is
+    // across its first texel, as nothing is in the empty row before.
+    all.push(vec![rect(0.0, 0.0, 1.0, 30.0, false)]);
+    all.extend(
+        test_fonts()
+            .into_iter()
+            .flat_map(|(_, glyphs)| glyphs.into_iter().map(|g| g.contours)),
+    );
+    // Outlines checked in sets of 1, 2, 4, 8 and 16 words, and by lists alone.
+    let mut held = [0; 6];
+    for (i, o) in all.iter().enumerate() {
+        for radius in [0.0f32, 1.25] {
+            let r = encode(o, None, radius > 0.0).unwrap();
+            // The outline's larger side over 30 texels of a 34-texel cell.
+            let k = (crate::atlas::GRID - 1.0) / 30.0;
+            let reach = if radius > 0.0 {
+                radius + 0.5 + 1.0 / 32.0
+            } else {
+                0.0
+            };
+            for at in [[2.0, 32.0], [2.37, 31.81], [0.2, 32.0]] {
+                let lists = texel_words_lists(&r, 34, 34, at, k, reach);
+                let sets = [
+                    texel_words_sets::<1>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<2>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<4>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<8>(&r, 34, 34, at, k, reach),
+                    texel_words_sets::<16>(&r, 34, 34, at, k, reach),
+                ];
+                for (j, s) in sets.iter().enumerate() {
+                    let words = 1 << j;
+                    assert_eq!(
+                        s.is_some(),
+                        r.outline.len() <= 32 * words,
+                        "outline {i}: {} pieces in {words} words",
+                        r.outline.len()
+                    );
+                    if let Some(s) = s {
+                        assert!(
+                            *s == lists,
+                            "outline {i} radius {radius} at {at:?}: sets of {words} words differ"
+                        );
+                    }
+                }
+                assert!(
+                    texel_words(&r, 34, 34, at, k, reach) == lists,
+                    "outline {i} radius {radius} at {at:?}: texel_words differ"
+                );
+                held[sets.iter().filter(|s| s.is_none()).count()] += 1;
+            }
+        }
+    }
+    // held[j]: the narrowest set that holds it has 2^j words; held[5]: none.
+    assert!(
+        held.iter().all(|&n| n > 0),
+        "a width went unchecked: {held:?}"
+    );
+}
+
 /// A digest of every texel word for the test fonts, plain and outlined, at
 /// 32 px and at an offset of the grid: any change to texel_words that
-/// should keep its words shows here (cargo test -- --nocapture).
+/// should keep its words shows here (cargo test-host --no-capture).
 #[test]
 fn texel_words_digest() {
     use std::hash::{Hash, Hasher};
@@ -302,4 +389,234 @@ fn texel_words_digest() {
         }
     }
     println!("texel words digest {:016x}", hasher.finish());
+}
+
+/// Outlines whose contours overlap: an E of four rectangles (a stem and
+/// three bars that share its edges, lap over it or stop at it, the way a
+/// font's builder leaves them), the same with the bars wound the other
+/// way (where they lap, the windings cancel: a hole under the nonzero
+/// rule), an L whose foot starts at the stem's corner and runs up its
+/// side (a seam, and a vertex of both), and random contours that cross
+/// each other and themselves.
+fn overlapping() -> Vec<Vec<Vec<Quad>>> {
+    let e = |ccw: bool| {
+        vec![
+            rect(2.0, 2.0, 6.0, 30.0, false),
+            rect(5.0, 2.0, 20.0, 6.0, ccw),
+            rect(6.0, 14.0, 16.0, 18.0, ccw),
+            rect(4.0, 26.0, 20.0, 30.0, ccw),
+        ]
+    };
+    let l = vec![
+        rect(2.0, 2.0, 6.0, 30.0, false),
+        rect(6.0, 2.0, 20.0, 6.0, false),
+    ];
+    let mut v = vec![e(false), e(true), l];
+    v.extend((0..200).map(|seed| random(seed, 32.0, 2.0)));
+    v
+}
+
+/// The decoder counts overlapping contours once: encode leaves the
+/// outline of what they fill (union::unite), so the box filter matches
+/// the nonzero area of the contours as they came, at any scale, and none
+/// of these is given up on.
+#[test]
+fn overlaps_count_once() {
+    for (i, o) in overlapping().iter().enumerate() {
+        let r = encode(o, None, false).unwrap();
+        assert!(r.simple, "outline {i}: the union gave up");
+        for px in [0.5f32, 1.0, 2.0] {
+            let n = (32.0 * px) as u32;
+            let exact = exact(o, px, n, n);
+            let half = 0.5 / px * r.scale;
+            let mut worst = 0f32;
+            for ty in 0..n {
+                for tx in 0..n {
+                    let c = [
+                        ((tx as f32 + 0.5) / px - r.origin[0]) * r.scale,
+                        ((ty as f32 + 0.5) / px - r.origin[1]) * r.scale,
+                    ];
+                    let want = exact[(ty * n + tx) as usize].min(1.0);
+                    worst = worst.max((coverage(&r, c, [half, half]) - want).abs());
+                }
+            }
+            assert!(
+                worst < 2e-3,
+                "outline {i} at {px} px a unit: off by {worst}"
+            );
+        }
+    }
+}
+
+/// Without overlaps the accumulated area is the nonzero area: outlines
+/// that have none, and the overlapping ones as encode leaves them, in a
+/// cell they fit and in one that cuts them on every side.
+#[test]
+fn accumulated_is_the_area() {
+    let mut all = outlines();
+    all.extend(
+        overlapping()
+            .iter()
+            .map(|o| held(&encode(o, None, false).unwrap())),
+    );
+    for (i, o) in all.iter().enumerate() {
+        for (px, shift, w, h) in [(1.0f32, [0.0f32, 0.0], 34, 34), (2.5, [-9.0, -7.5], 40, 31)] {
+            let placed: Vec<Vec<Quad>> = o
+                .iter()
+                .map(|c| {
+                    c.iter()
+                        .map(|q| q.map(|p| [p[0] * px + shift[0], p[1] * px + shift[1]]))
+                        .collect()
+                })
+                .collect();
+            let lines = coverage::polylines(&placed);
+            let (slabs, sums) = (
+                coverage::coverage(&lines, w, h),
+                coverage::accumulated(&lines, w, h),
+            );
+            let worst = slabs
+                .iter()
+                .zip(&sums)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(worst < 1e-5, "outline {i} at {px}: off by {worst}");
+        }
+    }
+}
+
+/// A record packed for the disk comes back whole (the texels bit for
+/// bit, the outline out of the ring), with what was packed beside it;
+/// words cut short, of an odd length or with a ring that is not theirs
+/// are no record.
+#[test]
+fn records_pack_and_unpack() {
+    let mut all = outlines();
+    all.extend(overlapping().into_iter().take(40));
+    all.extend([12, 100, 320].map(|teeth| vec![wheel(teeth)]));
+    for (i, o) in all.iter().enumerate() {
+        for outline in [false, true] {
+            let mut r = encode(o, None, outline).unwrap();
+            // As one the union gave up on, too: none of these is.
+            r.simple = i % 2 == 0;
+            let with = [1.5, -2.0, 300.25, i as f32];
+            let words = r.pack(with);
+            let (back, with_back) = Record::unpack(&words, r.scale).unwrap();
+            let bits =
+                |t: &[[f32; 4]]| -> Vec<u32> { t.iter().flatten().map(|f| f.to_bits()).collect() };
+            assert!(
+                bits(&back.texels) == bits(&r.texels)
+                    && back.outline == r.outline
+                    && back.origin == r.origin
+                    && back.scale == r.scale
+                    && back.simple == r.simple
+                    && with_back == with,
+                "outline {i}: the record came back another"
+            );
+            // Cut anywhere, it is none (or, by chance, never the same).
+            for cut in [
+                0,
+                1,
+                2,
+                7,
+                13,
+                words.len() / 2,
+                words.len() - 8,
+                words.len() - 1,
+            ] {
+                assert!(
+                    Record::unpack(&words[..cut], r.scale).is_none(),
+                    "outline {i}: {cut} of {} words read as a record",
+                    words.len()
+                );
+            }
+            // The ring's place and length are floats 8 and 9 (words 18..22).
+            for at in [18, 20] {
+                let mut bad = words.clone();
+                bad[at + 1] ^= 0x0080;
+                assert!(
+                    Record::unpack(&bad, r.scale).is_none(),
+                    "outline {i}: a ring moved"
+                );
+            }
+        }
+    }
+}
+
+/// A cell made at once (atlas::cell, the outline placed once for both) is
+/// its cover bytes and its texel words made apart: plain and outlined,
+/// with and without overlaps, wheels past what the sets hold, the test
+/// fonts; on the texel grid and off it.
+#[test]
+fn a_cell_is_its_cover_and_its_words() {
+    let mut all = outlines();
+    all.extend(overlapping().into_iter().take(60));
+    all.extend([20, 320].map(|teeth| vec![wheel(teeth)]));
+    all.extend(
+        test_fonts()
+            .into_iter()
+            .flat_map(|(_, glyphs)| glyphs.into_iter().map(|g| g.contours)),
+    );
+    for (i, o) in all.iter().enumerate() {
+        for radius in [0.0f32, 1.25, 2.25] {
+            let r = encode(o, None, radius > 0.0).unwrap();
+            let k = (crate::atlas::GRID - 1.0) / 30.0;
+            for at in [[2.0, 32.0], [2.37, 31.81]] {
+                let (bytes, words) = cell(&r, 34, 34, at, k, radius, 1.0 / 1.5);
+                assert!(
+                    bytes == cover_cell(&r, 34, 34, at, k, radius, 1.0 / 1.5),
+                    "outline {i} radius {radius} at {at:?}: other cover bytes"
+                );
+                assert!(
+                    words == texel_words(&r, 34, 34, at, k, reach_of(radius)),
+                    "outline {i} radius {radius} at {at:?}: other words"
+                );
+            }
+        }
+    }
+}
+
+/// An outlined font's cover bytes (at 1, 2 and 4 texels a unit, radius
+/// 1.25): the fill in L as the plain byte without the gamma, and in A
+/// black's alpha of max(outline, fill) for the outline's ramp over the
+/// true distance from the texel's centre; a pure A only where that is 0
+/// or 1.
+#[test]
+fn outlined_cover_bytes() {
+    let (g, radius) = (1.0 / 1.5, 1.25f32);
+    for (i, o) in outlines().iter().enumerate() {
+        let r = encode(o, None, true).unwrap();
+        for px in [1.0f32, 2.0, 4.0] {
+            let (w, h) = ((24.0 * px).ceil() as u32, (16.0 * px).ceil() as u32);
+            let exact = exact(&held(&r), px, w, h);
+            let at = [r.origin[0] * px, h as f32 - r.origin[1] * px];
+            let k = r.scale / px;
+            let cell = cover_cell(&r, w, h, at, k, radius, g);
+            for ty in 0..h {
+                for tx in 0..w {
+                    let at = 2 * ((h - 1 - ty) * w + tx) as usize;
+                    let (l, a) = (cell[at] as f32, cell[at + 1] as f32);
+                    let e = exact[(ty * w + tx) as usize].min(1.0);
+                    assert!(
+                        (l - e * 255.0).abs() <= 2.0
+                            || (l == 2.0 && e * 255.0 < 2.0)
+                            || (l == 254.0 && e * 255.0 > 254.0),
+                        "outline {i} at {px}: texel ({tx}, {ty}) fill {l}, covered {e}"
+                    );
+                    let c = [
+                        ((tx as f32 + 0.5) / px - r.origin[0]) * r.scale,
+                        ((ty as f32 + 0.5) / px - r.origin[1]) * r.scale,
+                    ];
+                    let d = distance(&r, c, (radius + 2.0) * k) / k;
+                    let want = (radius - d + 0.5).clamp(0.0, 1.0).max(e);
+                    // The byte back through black's alpha, 1 - (1 - c)^(1/1.5);
+                    // an edge's byte stops at 1 and 254.
+                    let got = 1.0 - (1.0 - a / 255.0).powf(1.5);
+                    assert!(
+                        (got - want).abs() <= 0.02,
+                        "outline {i} at {px}: texel ({tx}, {ty}) alpha {a} ({got}), want {want} at distance {d}"
+                    );
+                }
+            }
+        }
+    }
 }

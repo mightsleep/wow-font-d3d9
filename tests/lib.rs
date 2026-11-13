@@ -10,6 +10,8 @@ mod glyph;
 mod ports;
 #[path = "../src/record.rs"]
 mod record;
+#[path = "../src/union.rs"]
+mod union;
 
 #[cfg(test)]
 mod reference;

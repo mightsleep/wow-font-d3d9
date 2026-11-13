@@ -1,0 +1,57 @@
+# What Windows' own Direct3D 9 says to the DLL and its decoder
+# (examples/probe.rs), as a job of ci and of release. A runner has no GPU,
+# but its devices (WARP, Microsoft Basic Render Driver) are made by the
+# same d3d9.dll as anyone's, and its CreatePixelShader refuses what a real
+# Windows refused before: two constants in an instruction, a 33rd
+# temporary. So: the DLL loads, hooks a device and gets its decoder made.
+# No pixel is looked at, and no vendor's driver is asked.
+name: probe
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: |
+          nix build -L .#probe
+          mkdir probe && cp -L result/probe.exe result/d3d9.dll probe/
+          sha256sum probe/d3d9.dll
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe
+          path: probe
+          if-no-files-found: error
+          retention-days: 7
+  windows:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: probe
+          path: probe
+      # --strict: exit 1 unless a device with ps_3_0 refuses the two bad
+      # shaders and takes the decoder, from the probe and from the proxy.
+      # WOW_FONT_D3D9_DIAG: the proxy's account of the device in its log,
+      # and the decoder's source through d3dcompiler_47, the stand-in.
+      - name: Probe
+        shell: pwsh
+        working-directory: probe
+        env:
+          WOW_FONT_D3D9_DIAG: '1'
+        run: |
+          (Get-FileHash d3d9.dll -Algorithm SHA256).Hash.ToLower()
+          ./probe.exe --strict

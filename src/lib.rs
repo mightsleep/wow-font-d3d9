@@ -28,6 +28,7 @@ mod record;
 mod settings;
 mod texture;
 mod trace;
+mod union;
 mod v2;
 
 use std::ffi::c_void;

@@ -1,14 +1,22 @@
-# A tag vX.Y.Z (the version in Cargo.toml) makes a release: d3d9.dll on its
+# A tag vX.Y.Z (the version in Cargo.toml, with a section in CHANGELOG.md
+# that opens the release notes) makes a release: d3d9.dll on its
 # own for players, the zip from `nix build .#release` (the DLL, a sample
 # ini, README, LICENSE) built twice to be sure it is reproducible, and the
 # SHA-256 of both, with a provenance attestation for the DLL and the zip.
+# Not before a Windows runner has loaded the DLL and taken its decoder
+# (probe.yml; the build is reproducible, so that is the DLL released).
 name: release
 on:
   push:
     tags: ['v*']
 permissions: {}
 jobs:
+  probe:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/probe.yml
   release:
+    needs: probe
     runs-on: ubuntu-latest
     permissions:
       contents: write # gh release create
@@ -23,6 +31,11 @@ jobs:
         run: |
           want="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME, Cargo.toml $want"; exit 1; }
+      - name: CHANGELOG.md has this version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v h="## $ver" '$0 == h { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > changes.md
+          grep -q . changes.md || { echo "CHANGELOG.md has no section $ver"; exit 1; }
       - run: nix flake check -L
       - name: Build, twice
         run: |
@@ -50,7 +63,9 @@ jobs:
           d="wow-font-d3d9-${GITHUB_REF_NAME#v}"
           dll=$(sha256sum d3d9.dll | cut -d' ' -f1)
           zip=$(sha256sum "$d.zip" | cut -d' ' -f1)
-          cat > notes.md <<NOTES
+          # README links in the changelog are relative to the repository.
+          { echo "## What changed"; sed "s|](README.md|](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/README.md|g" changes.md; } > notes.md
+          cat >> notes.md <<NOTES
           ## Install
 
           1. Download \`d3d9.dll\` and put it next to \`Wow.exe\` (WoW 3.3.5a, build 12340).

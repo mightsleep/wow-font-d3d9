@@ -118,6 +118,41 @@
           '';
         });
 
+    # The probe (examples/probe.rs): a 32-bit exe that loads the DLL and asks
+    # each kind of device for the decoder, with the DLL next to it. For a
+    # Windows runner (.github/workflows/probe.yml); probeApp runs it under
+    # Wine. An exe wants the C runtime's start-up too, and as for the bench
+    # that is rust-mingw's (msvcrt), not nixpkgs' (ucrt).
+    probeExe = (craneLib.overrideToolchain (rust.combine [toolchain rust.targets.${target}.stable.rust-mingw])).buildPackage (common
+      // {
+        CARGO_TARGET_I686_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-self-contained=yes";
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./build.rs
+            ./src
+            ./examples
+            ./shaders
+          ];
+        };
+        pname = "wow-font-d3d9-probe";
+        cargoArtifacts = null;
+        cargoExtraArgs = "--example probe";
+        installPhaseCommand = ''
+          install -Dm755 target/${target}/release/examples/probe.exe $out/probe.exe
+        '';
+      });
+    probe = pkgs.runCommand "wow-font-d3d9-probe" {} ''
+      imports=$(${objdump} -p ${probeExe}/probe.exe | grep 'DLL Name' | awk '{print $3}' | LC_ALL=C sort | xargs)
+      echo "probe.exe imports: $imports"
+      # As for the DLL (pe): nothing a bare Windows lacks.
+      case " $imports " in *mcfgthread*|*winpthread*|*libgcc*) exit 1 ;; esac
+      mkdir $out
+      cp ${probeExe}/probe.exe ${dll}/d3d9.dll $out/
+    '';
+
     # The DLL's code as Windows builds it, warnings as errors (the allowed
     # lints are in Cargo.toml).
     clippy = craneLint.cargoClippy (common
@@ -137,6 +172,7 @@
           ./src/atlas.rs
           ./src/glyph.rs
           ./src/coverage.rs
+          ./src/union.rs
           ./src/record.rs
           ./src/ports.rs
           ./shaders/decoder.ps3
@@ -147,7 +183,9 @@
       cargoVendorDir = craneLib.vendorCargoDeps {cargoLock = ./tests/Cargo.lock;};
       cargoExtraArgs = "--manifest-path tests/Cargo.toml";
     };
-    tests = craneLib.cargoTest testCrate;
+    # By nextest, as `cargo test-host` in the dev shell: a process a test,
+    # each with its time. Here every failure is shown, not the first alone.
+    tests = craneLib.cargoNextest (testCrate // {cargoNextestExtraArgs = "--no-fail-fast";});
     clippyTests = craneLint.cargoClippy (testCrate // {cargoClippyExtraArgs = "--all-targets -- -D warnings";});
 
     # Every .rs as rustfmt has it: the DLL, the bench, build.rs, the tests.
@@ -267,7 +305,10 @@
         run="$cache/bench-run"
         install -m755 ${benchExe}/bench.exe "$run/bench.exe"
         install -m644 ${pkgs.dxvk.bin}/x64/d3d9.dll "$run/d3d9.dll"
-        export WINEPREFIX="$cache/wine" WINEDEBUG=-all WINEDLLOVERRIDES=d3d9=n
+        # Without Mono, Gecko and menu entries: a new prefix waits five
+        # minutes for their set-up where nobody answers (CI), 5 s without.
+        export WINEPREFIX="$cache/wine" WINEDEBUG=-all
+        export WINEDLLOVERRIDES="d3d9=n;mscoree,mshtml=;winemenubuilder.exe=d"
         export DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
         if [ "$lavapipe" = 1 ]; then
           VK_ICD_FILENAMES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
@@ -278,23 +319,51 @@
       '';
     };
 
+    # The probe under Wine, the proxy over DXVK on lavapipe as the bench has
+    # it. DXVK takes every shader, so this shows that the probe and the DLL
+    # run, not what Windows says.
+    probeApp = pkgs.writeShellApplication {
+      name = "wow-font-probe";
+      runtimeInputs = [pkgs.wineWow64Packages.stable pkgs.xvfb-run];
+      text = ''
+        cache="''${XDG_CACHE_HOME:-$HOME/.cache}/wow-font-d3d9"
+        run="$cache/probe-run"
+        mkdir -p "$run"
+        install -m755 ${probe}/probe.exe "$run/probe.exe"
+        install -m644 ${probe}/d3d9.dll "$run/d3d9.dll"
+        install -m644 ${pkgs.dxvk.bin}/x32/d3d9.dll "$run/d3d9_dxvk.dll"
+        export WINEPREFIX="$cache/wine-probe" WINEDEBUG=-all
+        export WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d"
+        export WOW_FONT_D3D9_REAL=d3d9_dxvk.dll DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
+        cd "$run"
+        VK_ICD_FILENAMES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
+          xvfb-run -a wine "$run/probe.exe" "$@"
+      '';
+    };
+
     # The bench as a test, for CI: the committed decoder on lavapipe against
     # the exact reference, Roboto with and without an outline, failing when
-    # a scale has more texels off by over 16/255 than its limit. The limits
-    # are about a third over what the decoder does now (2.76, 0, 0.29 and
-    # 0.08 %): a real regression trips them, a newer Mesa does not.
+    # a scale has more texels off by over 16/255 than its limit. Once in
+    # white and once in black, the two ends of the alpha's tone. The decoder
+    # does 0.82, 0, 0.000 and 0.001 % now (Roboto's contours overlap, so the
+    # union is under test too; at 0.5x an outline's alpha near 1 is steep in
+    # its distance, which six chords have to a hundredth of a texel): the
+    # limits leave a third at 0.5x and tens of texels elsewhere, for a newer
+    # Mesa.
     gateApp = pkgs.writeShellApplication {
       name = "wow-font-gate";
       text = let
         font = f: px: outline: "--font 'Z:${pkgs.roboto}/share/fonts/truetype/${f}.ttf:${toString px}:${toString outline}'";
       in ''
-        exec ${benchApp}/bin/wow-font-bench --lavapipe --no-time \
-          --scales 0.5,1,2,4 \
-          ${font "Roboto-Regular" 32 1} \
-          ${font "Roboto-Regular" 14 0} \
-          ${font "Roboto-Bold" 20 1} \
-          --max-gross 0.5:3.5,1:0.05,2:0.4,4:0.12 \
-          "$@"
+        for color in ffffff 000000; do
+          ${benchApp}/bin/wow-font-bench --lavapipe --no-time \
+            --scales 0.5,1,2,4 --color "$color" \
+            ${font "Roboto-Regular" 32 1} \
+            ${font "Roboto-Regular" 14 0} \
+            ${font "Roboto-Bold" 20 1} \
+            --max-gross 0.5:1.1,1:0.02,2:0.02,4:0.02 \
+            "$@"
+        done
       '';
     };
 
@@ -330,7 +399,7 @@
     packages.${system} = {
       default = dll;
       bench = benchExe;
-      inherit release;
+      inherit probe release;
     };
 
     apps.${system} = {
@@ -338,6 +407,11 @@
         type = "app";
         program = "${benchApp}/bin/wow-font-bench";
         meta.description = "The decoder against an exact reference, under Wine";
+      };
+      probe = {
+        type = "app";
+        program = "${probeApp}/bin/wow-font-probe";
+        meta.description = "The DLL and its decoder before each kind of D3D9 device, under Wine";
       };
       gate = {
         type = "app";
@@ -373,6 +447,7 @@
           ])
           mingw
           pkgs.vkd3d
+          pkgs.cargo-nextest
         ];
       });
   };

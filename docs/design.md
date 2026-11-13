@@ -16,17 +16,27 @@ shader while a cache is bound. That runs on Windows' D3D9, wined3d, DXVK
 and Proton with one 32-bit build, and costs ps_3_0 (no integers, 32
 temporaries) in a 32-bit process.
 
-**2. Which font? Ask the stack.** Which glyph sits in which cell lives in
-the client's CGxFont, and searching the heap for it took 15 to 21 s. But
-the client fills a cache from a callback that gets its TEXTURECACHE, so
-inside our `LockRect` hook a pointer to it is a few frames up our stack.
-A stack word `w` is it if
+**2. Which font? The client keeps a list.** Which glyph sits in which
+cell lives in the client's CGxFont, and searching the heap for those took
+15 to 21 s. But the client makes every font with `g_fonts.NewNode`, so
+all of them hang on one list, a static in Wow.exe. The proxy knows it by
+what makes it a list of fonts: a pair of words (`m_prevlink`, `m_next`)
+in a writable section whose first node links back to the pair, whose last
+node names the pair as its end (the client tags the terminator's address
+with its low bit) and whose nodes have a CGxFont's header 376 bytes in.
+In 12340 the pair sits at 0xad9ab0, which is tried first; searching the
+image for it took 7 to 12 ms. A glyph cache's owner is then the font one
+of whose eight texture caches holds a handle `h` with
 
-    *(*(*w + 0x44) + 0x38) == the texture being locked,
-    and w - 20 - 24 i is a CGxFont header
+    *(*(h + 0x44) + 0x38) == the texture being locked
 
-Found at every upload, 75 to 78 words up, in 45 to 267 us. The owner is
-whoever is uploading now, so recycled textures cannot fool it.
+asked from inside our `LockRect` hook, where the client is about to
+upload and its font has the texture by now: a walk over the fonts (ten of
+them, 50 us), and at later uploads one read, 4 us, to see that the font
+still holds the same handle. A recycled texture names its new font at its
+next upload. A cache filled before the client stored its handle has no
+owner yet and is asked for again at a draw (`src/fonts.rs`,
+`src/mem.rs`).
 
 **3. Map the state, not the draws.** The device holds `phi(s)` of the
 client's state `s`: our decoder and constants if the bound texture is a
@@ -116,8 +126,8 @@ Pieces reaching into several bands are copied, not indexed, saving a
 dependent fetch per piece: 7.9 to 5.4 fetches (Latin), 10.1 to 6.9 (CJK),
 for 1.1 and 4.9 KB a glyph of video memory, which a 32-bit process does
 not pay for. A band's sum has one sign while contours do not overlap, so
-each band adds its absolute value (overlapping variable fonts are off
-here; item 12's bytes are not).
+each band adds its absolute value; contours that do overlap are united
+first (item 21).
 
 **10. Pieces that add nothing stay out.** A horizontal piece has `y' = 0`
 in item 8, and one touching only the band's boundary row has no rows in
@@ -161,6 +171,8 @@ Each adds to its own column the mean of `clamp(x - c, 0, 1)` over the slab,
 
 and to every column left of it the slab's height, by a difference array
 and one prefix sum. Cost goes with crossings, not texels times pieces.
+This holds whatever the contours do, and it is the bench's truth; the
+cells themselves take item 22 unless item 21 gave up on the outline.
 
 **14. Outlines from a distance.** The outline's alpha is
 `saturate(r - d + 1/2)` for `d` the distance to the pieces the walk reads
@@ -170,7 +182,9 @@ anyway, and the cover gets a second byte (A8L8: fill, and
 `d + sqrt(1/2) <= r - 1/2` makes it 1: purity again. A quadratic lies in
 the hull of its control points, so their box's distance bounds the
 piece's from below and far pieces skip the chords; six chords stray
-`|a - 2b + c| / 144`.
+`|a - 2b + c| / 144`. On the CPU a cell's distances from its texel
+centres are worked out once, for these bytes and for the texel words'
+nearest pieces (item 15) alike: a fifth off an outlined cell's time.
 
 ## Texel words
 
@@ -183,7 +197,12 @@ keeps a ring (every piece in outline order, written twice so no run
 wraps), and a texel's word names three runs: the arcs between the three
 largest gaps among its needed pieces. Pieces swept in between add nothing
 or count in the run instead of the backdrop. The side with shorter runs
-wins. 17 % less text time in the game.
+wins. 17 % less text time in the game. On the CPU a texel's word
+comes of sets of pieces (a bit a piece: the row's, the column's left and
+right of E, the near ones), so two texels with the same sets have the
+same word, and along a straight edge the next texel mostly has; and the
+right side's runs are only worked out when it needs fewer pieces than the
+left's read, since runs read every piece they need at least.
 
 **16. A word that reads as nothing.** Four 16-bit integers
 (A16B16G16R16): per run `start * 16 + (count & 15)`, and in the fourth the
@@ -205,7 +224,11 @@ decoder interpolates at the centroid, inside the covered part.
 crash's cut tail is truncated at the next start. A font is named by its
 table directory and length (a 26 MB font is not read to be identified),
 and the key includes a hash of the encoder's sources (`build.rs`), so a
-changed encoder never asks for old files.
+changed encoder never asks for old files. A glyph's record goes there
+too, one a font whatever the size, as the texels the GPU takes: what is
+read is what is used, and the outline comes back out of the ring. A
+record read is 0.4 us where parsing and encoding the glyph were 10.6
+(Latin), 1.4 for 44 (CJK), every session.
 
 **19. Check the reference.** Chords within 1/256 texel leave 4e-3 of
 area error next to a curve, so the tests cut curves 16 ways and integrate
@@ -224,8 +247,68 @@ asking the device which hand-made shaders it takes (all, up to 32768
 slots: not the size) and by Microsoft's compiler, whose bytecode it took
 and which never reads two constants (`src/draw.rs`, diagnose).
 
+## Overlaps
+
+**21. Pieces, not contours.** Fonts built from parts (a stem and its
+bars, Roboto 3: 52 of 80 Latin glyphs) keep their contours overlapping,
+and the decoder's sum is the area times the winding: twice where two
+overlap, 0.5 off at an edge. The sum needs no contours, though, only
+pieces whose crossings count 0 or 1 everywhere. So `encode` cuts the
+pieces where they cross and keeps the parts with the fill on one side
+only (`src/union.rs`). Where: a quadratic `p(t) = a t^2 + b t + c` has
+
+    a x (p - c) = (a x b) t,   b x (p - c) = -(a x b) t^2
+    F(p) = (a x (p - c))^2 + (a x b) (b x (p - c)) = 0
+
+and the other piece put for `p` gives a quartic in its parameter with
+whole coefficients under 78 bits, the grid being 16. Its roots are
+isolated exactly, by Descartes' rule on the Bernstein coefficients and
+halving by sums; a root where one piece's end lies on another is an
+exact zero. Which: between two points where something meets a contour
+the fill stays on the same sides, so one winding either side of a run's
+longest part settles the run. The parts chain into loops by their grid
+points. Shared edges (the stem's and a bar's) are cut at each other's
+ends and left once. Over 16/255 on the gate's Roboto: 2.76, 0.29 and
+0.076 % at 0.5x, 2x and 4x became 0.29, 0.000 and 0.001 %; Morpheus (5
+glyphs of 76), in the decoder's CPU model, up to 0.22 % to none. A
+glyph's record costs twice the time, once: 5 to 10 us (Latin), 21 to 42
+(CJK), on x86_64. An outline whose loops do not close stays as it was.
+
+**22. Sums again.** With no overlaps left, a cell's fill needs no slabs
+(item 13): each chord adds, per texel row, the area right of it to the
+columns it passes through and its height to the next, and a prefix sum
+along the row hands that on, the decoder's own sum on the texel grid.
+The same bytes for fonts without overlaps (none of 400 000 differ), in a
+fifth of the time: a 12 px Latin cell's fill 10.6 to 1.8 us, a 32 px CJK
+one 67.7 to 10.7. Where the union removed a piece from inside the fill
+its texels turn pure, a step or two of 255.
+
+## Tone
+
+**23. Alpha by what is drawn.** The device blends display values, not
+light, so a coverage `c` as alpha is wrong both ways: white text over
+dark comes out thin, black over anything heavy. For black the right
+alpha does not depend on what is under it: the light left is `(1 - c)`
+of the background's, its display value `(1 - c)^(1/g)` of it, so
+
+    alpha = 1 - (1 - c)^(1/g)
+
+and for white over black it is `c^(1/g)`. A plain font takes the two by
+the luma of the colour it is drawn in (the vertex colour, so a shadow,
+which the client draws as the same quads again in black, gets black's);
+an outlined font always black's, its alpha being the black outline's edge
+whatever the text. The cover bytes keep `c^(1/g)` for a plain font (white
+text reads the byte as it is, the rest take `c` back out of it) and
+black's alpha for an outlined one. `g` is the `gamma` knob (1.5). Before,
+all of it was `c^(1/g)`: at half coverage a shadow's alpha 0.63 where
+0.37 is right and the client's bitmap gives 0.5.
+
 ## Tried and set aside
 
+- **The font from the stack**: the client fills a cache from a callback
+  that gets its TEXTURECACHE, so a pointer to it sits a few frames up the
+  stack of our `LockRect` hook. Found 75 to 78 words up, in 45 to 267 us.
+  The list (item 2) needs no depth to guess.
 - **Hermite fields in the client's cells** (version one): over 16/255 at
   1x, 2x, 4x, Roboto outlined 0.78, 0.67, 1.11 % against 0.000, 0.087,
   0.250 %; CJK 2.3, 2.2, 3.5 % against 0.000, 0.035, 0.119 %.

@@ -1,5 +1,6 @@
 //! v2's cover bytes and texel words on disk (Cache\wow-font-d3d9\ next to
-//! Wow.exe), so a cell is worked out once, not once a session.
+//! Wow.exe), so a cell is worked out once, not once a session; and each
+//! font's records, so neither is a glyph (Params::glyphs).
 //!
 //! One file a font file, size, outline and settings, and build of the
 //! encoder (WOW_FONT_ENCODER, a hash of its sources: build.rs); a record a
@@ -104,6 +105,19 @@ pub struct Params {
 pub const PASTE_FLAGS: u32 = 0xb;
 
 impl Params {
+    /// The bundle of a font's records (atlas::Record::pack), one a glyph
+    /// whatever the size: keyed by the character, `dx` 1 for the record
+    /// of an outlined font.
+    pub fn glyphs(font: u64) -> Params {
+        Params {
+            font,
+            pixel_size: 0,
+            flags: 0,
+            gamma: 0.0,
+            radius: 0.0,
+        }
+    }
+
     fn id(&self) -> u64 {
         let mut h = Fx::default();
         h.write_u64(self.font);

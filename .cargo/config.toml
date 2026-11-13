@@ -1,4 +1,5 @@
 # The host's tests (tests/, a crate of their own) from the repository's
-# root, also in the dev shell, whose CARGO_BUILD_TARGET is the DLL's.
+# root, also in the dev shell, whose CARGO_BUILD_TARGET is the DLL's. By
+# cargo-nextest (the dev shell has it), as the flake's check runs them.
 [alias]
-test-host = "test --manifest-path tests/Cargo.toml --target x86_64-unknown-linux-gnu"
+test-host = "nextest run --manifest-path tests/Cargo.toml --target x86_64-unknown-linux-gnu"
