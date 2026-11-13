@@ -16,17 +16,27 @@ shader while a cache is bound. That runs on Windows' D3D9, wined3d, DXVK
 and Proton with one 32-bit build, and costs ps_3_0 (no integers, 32
 temporaries) in a 32-bit process.
 
-**2. Which font? Ask the stack.** Which glyph sits in which cell lives in
-the client's CGxFont, and searching the heap for it took 15 to 21 s. But
-the client fills a cache from a callback that gets its TEXTURECACHE, so
-inside our `LockRect` hook a pointer to it is a few frames up our stack.
-A stack word `w` is it if
+**2. Which font? The client keeps a list.** Which glyph sits in which
+cell lives in the client's CGxFont, and searching the heap for those took
+15 to 21 s. But the client makes every font with `g_fonts.NewNode`, so
+all of them hang on one list, a static in Wow.exe. The proxy knows it by
+what makes it a list of fonts: a pair of words (`m_prevlink`, `m_next`)
+in a writable section whose first node links back to the pair, whose last
+node names the pair as its end (the client tags the terminator's address
+with its low bit) and whose nodes have a CGxFont's header 376 bytes in.
+In 12340 the pair sits at 0xad9ab0, which is tried first; searching the
+image for it took 7 to 12 ms. A glyph cache's owner is then the font one
+of whose eight texture caches holds a handle `h` with
 
-    *(*(*w + 0x44) + 0x38) == the texture being locked,
-    and w - 20 - 24 i is a CGxFont header
+    *(*(h + 0x44) + 0x38) == the texture being locked
 
-Found at every upload, 75 to 78 words up, in 45 to 267 us. The owner is
-whoever is uploading now, so recycled textures cannot fool it.
+asked from inside our `LockRect` hook, where the client is about to
+upload and its font has the texture by now: a walk over the fonts (ten of
+them, 50 us), and at later uploads one read, 4 us, to see that the font
+still holds the same handle. A recycled texture names its new font at its
+next upload. A cache filled before the client stored its handle has no
+owner yet and is asked for again at a draw (`src/fonts.rs`,
+`src/mem.rs`).
 
 **3. Map the state, not the draws.** The device holds `phi(s)` of the
 client's state `s`: our decoder and constants if the bound texture is a
@@ -295,6 +305,10 @@ all of it was `c^(1/g)`: at half coverage a shadow's alpha 0.63 where
 
 ## Tried and set aside
 
+- **The font from the stack**: the client fills a cache from a callback
+  that gets its TEXTURECACHE, so a pointer to it sits a few frames up the
+  stack of our `LockRect` hook. Found 75 to 78 words up, in 45 to 267 us.
+  The list (item 2) needs no depth to guess.
 - **Hermite fields in the client's cells** (version one): over 16/255 at
   1x, 2x, 4x, Roboto outlined 0.78, 0.67, 1.11 % against 0.000, 0.087,
   0.250 %; CJK 2.3, 2.2, 3.5 % against 0.000, 0.035, 0.119 %.
