@@ -1,0 +1,60 @@
+# What a Windows runner's own Direct3D 9 says to the DLL and its decoder
+# (examples/probe.rs). The runner has no GPU, so this is first a question:
+# which kinds of device it has, and whether their CreatePixelShader checks
+# what a real Windows refused before (two constants in an instruction, a
+# 33rd temporary). By hand, and for a pull request that touches the probe,
+# until the answer says whether it can be a job of ci and release.
+name: probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/probe.yml
+      - examples/probe.rs
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: |
+          nix build -L .#probe
+          mkdir probe && cp -L result/probe.exe result/d3d9.dll probe/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe
+          path: probe
+          if-no-files-found: error
+          retention-days: 7
+  windows:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: probe
+          path: probe
+      # WOW_FONT_D3D9_DIAG: the proxy's own account of the device in its
+      # log (caps, adapter, shaders by size, d3dcompiler_47's decoder),
+      # which the probe prints.
+      - name: Probe
+        shell: pwsh
+        working-directory: probe
+        env:
+          WOW_FONT_D3D9_DIAG: '1'
+        run: ./probe.exe
+      - name: Probe, as a test would run it
+        if: always()
+        shell: pwsh
+        working-directory: probe
+        run: ./probe.exe --strict
