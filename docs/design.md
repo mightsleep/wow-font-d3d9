@@ -116,8 +116,8 @@ Pieces reaching into several bands are copied, not indexed, saving a
 dependent fetch per piece: 7.9 to 5.4 fetches (Latin), 10.1 to 6.9 (CJK),
 for 1.1 and 4.9 KB a glyph of video memory, which a 32-bit process does
 not pay for. A band's sum has one sign while contours do not overlap, so
-each band adds its absolute value (overlapping variable fonts are off
-here; item 12's bytes are not).
+each band adds its absolute value; contours that do overlap are united
+first (item 21).
 
 **10. Pieces that add nothing stay out.** A horizontal piece has `y' = 0`
 in item 8, and one touching only the band's boundary row has no rows in
@@ -161,6 +161,8 @@ Each adds to its own column the mean of `clamp(x - c, 0, 1)` over the slab,
 
 and to every column left of it the slab's height, by a difference array
 and one prefix sum. Cost goes with crossings, not texels times pieces.
+This holds whatever the contours do, and it is the bench's truth; the
+cells themselves take item 22 unless item 21 gave up on the outline.
 
 **14. Outlines from a distance.** The outline's alpha is
 `saturate(r - d + 1/2)` for `d` the distance to the pieces the walk reads
@@ -223,6 +225,42 @@ more, and the bench sees the same pixels in the same time. Found by
 asking the device which hand-made shaders it takes (all, up to 32768
 slots: not the size) and by Microsoft's compiler, whose bytecode it took
 and which never reads two constants (`src/draw.rs`, diagnose).
+
+## Overlaps
+
+**21. Pieces, not contours.** Fonts built from parts (a stem and its
+bars, Roboto 3: 52 of 80 Latin glyphs) keep their contours overlapping,
+and the decoder's sum is the area times the winding: twice where two
+overlap, 0.5 off at an edge. The sum needs no contours, though, only
+pieces whose crossings count 0 or 1 everywhere. So `encode` cuts the
+pieces where they cross and keeps the parts with the fill on one side
+only (`src/union.rs`). Where: a quadratic `p(t) = a t^2 + b t + c` has
+
+    a x (p - c) = (a x b) t,   b x (p - c) = -(a x b) t^2
+    F(p) = (a x (p - c))^2 + (a x b) (b x (p - c)) = 0
+
+and the other piece put for `p` gives a quartic in its parameter with
+whole coefficients under 78 bits, the grid being 16. Its roots are
+isolated exactly, by Descartes' rule on the Bernstein coefficients and
+halving by sums; a root where one piece's end lies on another is an
+exact zero. Which: between two points where something meets a contour
+the fill stays on the same sides, so one winding either side of a run's
+longest part settles the run. The parts chain into loops by their grid
+points. Shared edges (the stem's and a bar's) are cut at each other's
+ends and left once. Over 16/255 on the gate's Roboto: 2.76, 0.29 and
+0.076 % at 0.5x, 2x and 4x became 0.29, 0.000 and 0.001 %; Morpheus (5
+glyphs of 76), in the decoder's CPU model, up to 0.22 % to none. A
+glyph's record costs twice the time, once: 5 to 10 us (Latin), 21 to 42
+(CJK), on x86_64. An outline whose loops do not close stays as it was.
+
+**22. Sums again.** With no overlaps left, a cell's fill needs no slabs
+(item 13): each chord adds, per texel row, the area right of it to the
+columns it passes through and its height to the next, and a prefix sum
+along the row hands that on, the decoder's own sum on the texel grid.
+The same bytes for fonts without overlaps (none of 400 000 differ), in a
+fifth of the time: a 12 px Latin cell's fill 10.6 to 1.8 us, a 32 px CJK
+one 67.7 to 10.7. Where the union removed a piece from inside the fill
+its texels turn pure, a step or two of 255.
 
 ## Tried and set aside
 

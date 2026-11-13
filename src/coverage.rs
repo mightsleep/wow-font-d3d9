@@ -1,5 +1,7 @@
 //! A glyph's exact area in each texel, from its outline cut into chords:
 //! the fill of v2's cover bytes (atlas::cover_cell) and the bench's truth.
+//! Two ways: `coverage` under the nonzero rule whatever the contours do,
+//! `accumulated` several times faster for contours that do not overlap.
 
 use crate::glyph::{self, P, Quad};
 
@@ -156,6 +158,101 @@ fn band_cover(
             *cell += sign * mean * (yb - ya);
         }
     }
+}
+
+/// A chord's part within a texel row, from x0 to x1 (in 0..=w, either
+/// way round), `d` its height there, signed: the area right of it to the
+/// columns it passes through, and the rest of its height to the one after
+/// (accumulated's prefix sum hands that on).
+fn chord_in_row(row: &mut [f64], x0: f64, x1: f64, d: f64) {
+    let (xl, xr) = (x0.min(x1), x0.max(x1));
+    let (fl, cr) = (xl.floor(), xr.ceil());
+    let (il, ir) = (fl as usize, cr as usize);
+    if ir <= il + 1 {
+        // One column: its mean x says how much of it is right of the chord.
+        let xm = 0.5 * (xl + xr) - fl;
+        row[il] += d - d * xm;
+        row[il + 1] += d * xm;
+        return;
+    }
+    // Per column the chord rises 1 / (xr - xl) of its height: a triangle
+    // in the first, trapezoids between, and what is left of the last.
+    let s = 1.0 / (xr - xl);
+    let f0 = xl - fl;
+    let a0 = 0.5 * s * (1.0 - f0) * (1.0 - f0);
+    let f1 = xr - cr + 1.0;
+    let am = 0.5 * s * f1 * f1;
+    row[il] += d * a0;
+    if ir == il + 2 {
+        row[il + 1] += d * (1.0 - a0 - am);
+    } else {
+        let a1 = s * (1.5 - f0);
+        row[il + 1] += d * (a1 - a0);
+        for v in &mut row[il + 2..ir - 1] {
+            *v += d * s;
+        }
+        let a2 = a1 + (ir - il - 3) as f64 * s;
+        row[ir - 1] += d * (1.0 - a2 - am);
+    }
+    row[ir] += d * am;
+}
+
+/// The glyph's area in each texel for contours that do not overlap, by
+/// signed accumulation (docs/design.md, item 22): each chord adds, per
+/// texel row it crosses, the area right of it, and a prefix sum along the
+/// row hands every column further right its height. The sum is the area
+/// times the winding, so the area itself only while no two contours
+/// overlap; then it is `coverage`'s to within rounding, with no sorting
+/// and no slabs: the cost goes with chords times rows.
+pub fn accumulated(lines: &[Vec<P>], w: u32, h: u32) -> Vec<f32> {
+    let (wf, stride) = (w as f64, w as usize + 2);
+    let mut acc = vec![0f64; stride * h as usize];
+    for (a, b) in segments(lines).filter(|(a, b)| a[1] != b[1]) {
+        let (a, b, dir) = if a[1] < b[1] {
+            (a, b, 1.0)
+        } else {
+            (b, a, -1.0)
+        };
+        let (ax, ay, bx, by) = (a[0] as f64, a[1] as f64, b[0] as f64, b[1] as f64);
+        let slope = (bx - ax) / (by - ay);
+        let first = ay.max(0.0).floor() as u32;
+        let last = by.ceil().clamp(0.0, h as f64) as u32;
+        for r in first..last {
+            let (ya, yb) = (ay.max(r as f64), by.min(r as f64 + 1.0));
+            if yb <= ya {
+                continue;
+            }
+            let row = &mut acc[r as usize * stride..][..stride];
+            let (x0, x1) = (ax + (ya - ay) * slope, ax + (yb - ay) * slope);
+            let (lo, hi) = (x0.min(x1), x0.max(x1));
+            let d = (yb - ya) * dir;
+            // Left of the cell everything is right of the chord: its
+            // height to the first column. Right of the cell, nothing.
+            if hi <= 0.0 {
+                row[0] += d;
+                continue;
+            }
+            if lo >= wf {
+                continue;
+            }
+            let (cl, ch) = (lo.max(0.0), hi.min(wf));
+            if hi > lo {
+                row[0] += d * (cl - lo) / (hi - lo);
+                chord_in_row(row, cl, ch, d * (ch - cl) / (hi - lo));
+            } else {
+                chord_in_row(row, cl, ch, d);
+            }
+        }
+    }
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for row in acc.chunks_exact(stride) {
+        let mut sum = 0.0;
+        for v in &row[..w as usize] {
+            sum += v;
+            out.push(sum.abs().min(1.0) as f32);
+        }
+    }
+    out
 }
 
 fn segments(lines: &[Vec<P>]) -> impl Iterator<Item = (P, P)> + '_ {

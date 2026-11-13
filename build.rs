@@ -7,7 +7,12 @@
 #[path = "src/ports.rs"]
 mod ports;
 
-const ENCODER: [&str; 3] = ["src/glyph.rs", "src/coverage.rs", "src/atlas.rs"];
+const ENCODER: [&str; 4] = [
+    "src/glyph.rs",
+    "src/coverage.rs",
+    "src/atlas.rs",
+    "src/union.rs",
+];
 
 fn main() {
     let mut h: u64 = 0;

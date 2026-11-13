@@ -192,7 +192,8 @@ Ryzen AI 5 340, Wine 11.19 and DXVK 3.1.1, in towns and menus:
 Accuracy against an exact reference (the glyph's area in each pixel's
 box under the nonzero rule, from chords within 1/256 of the box),
 Roboto at 32 px with an outline, texels off by more than 16/255: 0 % at
-1x, 0.061 % at 2x, 0.18 % at 4x (`nix run .#bench`, Mesa lavapipe).
+1x and 2x, 0.002 % at 4x (`nix run .#bench`, Mesa lavapipe). Contours
+that overlap, as Roboto's do, count once.
 
 ## Building
 

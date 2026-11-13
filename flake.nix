@@ -137,6 +137,7 @@
           ./src/atlas.rs
           ./src/glyph.rs
           ./src/coverage.rs
+          ./src/union.rs
           ./src/record.rs
           ./src/ports.rs
           ./shaders/decoder.ps3

@@ -1,6 +1,6 @@
 //! The atlas records of format v2, the cover bytes and the texel words,
-//! for shaders/decoder.hlsl (why: docs/design.md, items 5 to 16; the decoder
-//! on the CPU: tests/reference.rs).
+//! for shaders/decoder.hlsl (why: docs/design.md, items 5 to 16, 21 and
+//! 22; the decoder on the CPU: tests/reference.rs).
 //!
 //! A record, texels of four floats (A32B32G32R32F), grid y up:
 //!   0          bands, band height, where the ring starts, its length
@@ -12,6 +12,7 @@
 //!   ring       every piece in outline order, twice (texel_words)
 
 use crate::glyph::{P, Quad};
+use crate::union::{self, Union};
 
 /// Grid steps across the outline's larger side: 16-bit coordinates.
 pub const GRID: f32 = 65536.0;
@@ -39,6 +40,10 @@ pub struct Record {
     pub scale: f32,
     /// The pieces in grid steps, contour by contour (not uploaded).
     pub outline: Vec<Quad>,
+    /// No two contours overlap (as the font has them, or after
+    /// union::unite): the area times the winding is the area. False only
+    /// for an outline the union gave up on.
+    pub simple: bool,
 }
 
 /// Split a quadratic at its extremum along `axis` if inside it, so that
@@ -98,6 +103,9 @@ fn piece_texel(q: &Quad) -> [f32; 4] {
 /// cache's texels to the grid is one constant a draw; None fits this
 /// outline alone onto the grid. `outline` keeps the pieces that add no
 /// area in the lists too, for an outlined font's distance.
+///
+/// Contours that overlap (each other or themselves) leave as the outline
+/// of what they fill (union::unite): the decoder's sums count once.
 pub fn encode(contours: &[Vec<Quad>], scale: Option<f32>, outline: bool) -> Option<Record> {
     let pts = contours.iter().flatten().flatten();
     let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
@@ -122,11 +130,19 @@ pub fn encode(contours: &[Vec<Quad>], scale: Option<f32>, outline: bool) -> Opti
             ((p[1] - lo[1]) * scale).round(),
         ]
     };
-    let pieces: Vec<(Quad, bool)> = contours
+    let pieces: Vec<Quad> = contours
         .iter()
         .flat_map(|c| monotone(c))
         .map(|q| q.map(grid))
         .filter(|q| q[0] != q[2] || q[0] != q[1])
+        .collect();
+    let (pieces, simple) = match union::unite(&pieces) {
+        Union::Simple => (pieces, true),
+        Union::United(outline) => (outline, true),
+        Union::Tangled => (pieces, false),
+    };
+    let pieces: Vec<(Quad, bool)> = pieces
+        .into_iter()
         .map(|q| {
             // A line's control is at its midpoint to within the rounding.
             let line = (0..2).all(|a| (2.0 * q[1][a] - q[0][a] - q[2][a]).abs() <= 1.0);
@@ -209,6 +225,7 @@ pub fn encode(contours: &[Vec<Quad>], scale: Option<f32>, outline: bool) -> Opti
         origin: lo,
         scale,
         outline: pieces.into_iter().map(|(q, _)| q).collect(),
+        simple,
     })
 }
 
@@ -367,8 +384,9 @@ const FLAT_TOL: f32 = 1.0 / 256.0;
 /// (outlined_bytes, `radius` > 0). Grid point (x, y) sits at texel
 /// coordinates (x / k + at.x, at.y - y / k), y down.
 ///
-/// The fill from coverage::coverage, the distance from each chord to the
-/// texels in its reach, purity from each piece's box. Chords stray under
+/// The fill from coverage::accumulated (coverage::coverage for an outline
+/// that still overlaps), the distance from each chord to the texels in
+/// its reach, purity from each piece's box. Chords stray under
 /// FLAT_TOL, so a byte may be one off the exact one.
 pub fn cover_cell(
     r: &Record,
@@ -406,7 +424,11 @@ pub fn cover_cell(
         }
     }
     let lines = chords(&pieces, &r.outline);
-    let fill = crate::coverage::coverage(&lines, w, h);
+    let fill = if r.simple {
+        crate::coverage::accumulated(&lines, w, h)
+    } else {
+        crate::coverage::coverage(&lines, w, h)
+    };
     if radius <= 0.0 {
         return (0..n)
             .map(|i| plain_byte(fill[i], reaches[i], inv_gamma))

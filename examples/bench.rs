@@ -28,6 +28,8 @@ mod atlas;
 mod coverage;
 #[path = "../src/glyph.rs"]
 mod glyph;
+#[path = "../src/union.rs"]
+mod union;
 
 use std::ffi::c_void;
 use std::fmt::Write as _;

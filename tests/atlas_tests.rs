@@ -385,3 +385,96 @@ fn texel_words_digest() {
     }
     println!("texel words digest {:016x}", hasher.finish());
 }
+
+/// Outlines whose contours overlap: an E of four rectangles (a stem and
+/// three bars that share its edges, lap over it or stop at it, the way a
+/// font's builder leaves them), the same with the bars wound the other
+/// way (where they lap, the windings cancel: a hole under the nonzero
+/// rule), an L whose foot starts at the stem's corner and runs up its
+/// side (a seam, and a vertex of both), and random contours that cross
+/// each other and themselves.
+fn overlapping() -> Vec<Vec<Vec<Quad>>> {
+    let e = |ccw: bool| {
+        vec![
+            rect(2.0, 2.0, 6.0, 30.0, false),
+            rect(5.0, 2.0, 20.0, 6.0, ccw),
+            rect(6.0, 14.0, 16.0, 18.0, ccw),
+            rect(4.0, 26.0, 20.0, 30.0, ccw),
+        ]
+    };
+    let l = vec![
+        rect(2.0, 2.0, 6.0, 30.0, false),
+        rect(6.0, 2.0, 20.0, 6.0, false),
+    ];
+    let mut v = vec![e(false), e(true), l];
+    v.extend((0..200).map(|seed| random(seed, 32.0, 2.0)));
+    v
+}
+
+/// The decoder counts overlapping contours once: encode leaves the
+/// outline of what they fill (union::unite), so the box filter matches
+/// the nonzero area of the contours as they came, at any scale, and none
+/// of these is given up on.
+#[test]
+fn overlaps_count_once() {
+    for (i, o) in overlapping().iter().enumerate() {
+        let r = encode(o, None, false).unwrap();
+        assert!(r.simple, "outline {i}: the union gave up");
+        for px in [0.5f32, 1.0, 2.0] {
+            let n = (32.0 * px) as u32;
+            let exact = exact(o, px, n, n);
+            let half = 0.5 / px * r.scale;
+            let mut worst = 0f32;
+            for ty in 0..n {
+                for tx in 0..n {
+                    let c = [
+                        ((tx as f32 + 0.5) / px - r.origin[0]) * r.scale,
+                        ((ty as f32 + 0.5) / px - r.origin[1]) * r.scale,
+                    ];
+                    let want = exact[(ty * n + tx) as usize].min(1.0);
+                    worst = worst.max((coverage(&r, c, [half, half]) - want).abs());
+                }
+            }
+            assert!(
+                worst < 2e-3,
+                "outline {i} at {px} px a unit: off by {worst}"
+            );
+        }
+    }
+}
+
+/// Without overlaps the accumulated area is the nonzero area: outlines
+/// that have none, and the overlapping ones as encode leaves them, in a
+/// cell they fit and in one that cuts them on every side.
+#[test]
+fn accumulated_is_the_area() {
+    let mut all = outlines();
+    all.extend(
+        overlapping()
+            .iter()
+            .map(|o| held(&encode(o, None, false).unwrap())),
+    );
+    for (i, o) in all.iter().enumerate() {
+        for (px, shift, w, h) in [(1.0f32, [0.0f32, 0.0], 34, 34), (2.5, [-9.0, -7.5], 40, 31)] {
+            let placed: Vec<Vec<Quad>> = o
+                .iter()
+                .map(|c| {
+                    c.iter()
+                        .map(|q| q.map(|p| [p[0] * px + shift[0], p[1] * px + shift[1]]))
+                        .collect()
+                })
+                .collect();
+            let lines = coverage::polylines(&placed);
+            let (slabs, sums) = (
+                coverage::coverage(&lines, w, h),
+                coverage::accumulated(&lines, w, h),
+            );
+            let worst = slabs
+                .iter()
+                .zip(&sums)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(worst < 1e-5, "outline {i} at {px}: off by {worst}");
+        }
+    }
+}
