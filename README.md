@@ -56,7 +56,9 @@ is a sample of one. I see no reason why it should happen:
 
 - It patches no code, in Wow.exe, in the real `d3d9.dll` or anywhere. It
   forwards every call and hooks Direct3D objects by pointing them at a
-  patched copy of their vtable. Nothing outside Direct3D 9 is hooked.
+  patched copy of their vtable. Nothing outside Direct3D 9 is hooked,
+  unless you ask for the cursor fix below, which puts a window
+  procedure in front of the client's.
 - It reads the client's font tables through `ReadProcessMemory` on its
   own process and writes nothing into the client's memory but those
   vtable pointers.
@@ -119,6 +121,7 @@ Environment variables:
 | `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll` |
 | `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
 | `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
+| `WOW_FONT_D3D9_CURSOR` | `1`: under Wine, stop the hardware cursor blinking while the mouse moves |
 
 ## What is wrong with it
 

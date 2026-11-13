@@ -3,6 +3,14 @@
 What a player would notice, newest first. The release notes are cut from
 here.
 
+## Unreleased
+
+- `WOW_FONT_D3D9_CURSOR=1`: under Wine the client's hardware cursor
+  blinks while the mouse moves, since the client hides and shows it at
+  every move and Wine passes both on. With this the proxy answers the
+  window's cursor question itself and nothing is hidden. Off unless
+  asked for: it is the one thing the proxy does outside Direct3D 9.
+
 ## 0.2.0
 
 Replace `d3d9.dll` with the new one. The cache in `Cache\wow-font-d3d9\`

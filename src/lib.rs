@@ -7,6 +7,8 @@
 //!
 //! Hooks point an object at a patched copy of its class's vtable (Class);
 //! no code anywhere is patched. Log: wow-font-d3d9.log next to Wow.exe.
+//! WOW_FONT_D3D9_CURSOR=1 adds the one hook outside Direct3D 9, a window
+//! procedure (cursor).
 
 #![allow(non_snake_case)]
 
@@ -15,6 +17,7 @@ mod atlas;
 mod cache;
 #[allow(dead_code)]
 mod coverage;
+mod cursor;
 mod draw;
 mod fontfile;
 mod fonts;
@@ -405,6 +408,7 @@ unsafe extern "system" fn create_device(
     ));
     if r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
         unsafe { hook_device(*out) };
+        unsafe { cursor::device(hwnd, params) };
     }
     r
 }
@@ -419,6 +423,7 @@ unsafe fn hook_device(dev: Ptr) {
         [(DEV_CREATE_TEXTURE, create_texture as *const () as usize)].as_slice(),
         &phi::hooks(),
         &traced,
+        &cursor::hooks(),
     ]
     .concat();
     if !unsafe { DEVICE.adopt(dev, DEV_VTABLE, &hooks) } {

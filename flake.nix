@@ -373,7 +373,7 @@
     pe = pkgs.runCommand "dll-imports-exports" {} ''
       dump=$(${objdump} -p ${dll}/d3d9.dll)
       imports=$(grep 'DLL Name' <<< "$dump" | awk '{print $3}' | LC_ALL=C sort | xargs)
-      want="KERNEL32.dll USERENV.dll WS2_32.dll api-ms-win-core-synch-l1-2-0.dll bcryptprimitives.dll msvcrt.dll ntdll.dll"
+      want="KERNEL32.dll USER32.dll USERENV.dll WS2_32.dll api-ms-win-core-synch-l1-2-0.dll bcryptprimitives.dll msvcrt.dll ntdll.dll"
       [ "$imports" = "$want" ] || { echo "imports: $imports"; echo "want:    $want"; exit 1; }
       exports=$(awk '/\+base\[/ && $NF != "RVA" {print $NF}' <<< "$dump" | LC_ALL=C sort | xargs)
       want="D3DPERF_BeginEvent D3DPERF_EndEvent D3DPERF_GetStatus D3DPERF_QueryRepeatFrame D3DPERF_SetMarker D3DPERF_SetOptions D3DPERF_SetRegion Direct3DCreate9 Direct3DCreate9Ex Direct3DShaderValidatorCreate9 DllMain"
