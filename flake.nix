@@ -305,7 +305,10 @@
         run="$cache/bench-run"
         install -m755 ${benchExe}/bench.exe "$run/bench.exe"
         install -m644 ${pkgs.dxvk.bin}/x64/d3d9.dll "$run/d3d9.dll"
-        export WINEPREFIX="$cache/wine" WINEDEBUG=-all WINEDLLOVERRIDES=d3d9=n
+        # Without Mono, Gecko and menu entries: a new prefix waits five
+        # minutes for their set-up where nobody answers (CI), 5 s without.
+        export WINEPREFIX="$cache/wine" WINEDEBUG=-all
+        export WINEDLLOVERRIDES="d3d9=n;mscoree,mshtml=;winemenubuilder.exe=d"
         export DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
         if [ "$lavapipe" = 1 ]; then
           VK_ICD_FILENAMES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
@@ -330,6 +333,7 @@
         install -m644 ${probe}/d3d9.dll "$run/d3d9.dll"
         install -m644 ${pkgs.dxvk.bin}/x32/d3d9.dll "$run/d3d9_dxvk.dll"
         export WINEPREFIX="$cache/wine-probe" WINEDEBUG=-all
+        export WINEDLLOVERRIDES="mscoree,mshtml=;winemenubuilder.exe=d"
         export WOW_FONT_D3D9_REAL=d3d9_dxvk.dll DXVK_LOG_LEVEL=warn DXVK_LOG_PATH=none
         cd "$run"
         VK_ICD_FILENAMES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
