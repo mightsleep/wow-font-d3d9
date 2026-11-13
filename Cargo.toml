@@ -1,6 +1,6 @@
 [package]
 name = "wow-font-d3d9"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Vector text for WoW 3.3.5a: a proxy d3d9.dll that draws the game's text from font outlines"
 license = "GPL-3.0-or-later"
