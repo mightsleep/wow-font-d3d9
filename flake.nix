@@ -281,9 +281,10 @@
 
     # The bench as a test, for CI: the committed decoder on lavapipe against
     # the exact reference, Roboto with and without an outline, failing when
-    # a scale has more texels off by over 16/255 than its limit. The limits
-    # are about a third over what the decoder does now (2.76, 0, 0.29 and
-    # 0.08 %): a real regression trips them, a newer Mesa does not.
+    # a scale has more texels off by over 16/255 than its limit. The decoder
+    # does 0.29, 0, 0.000 and 0.001 % now (Roboto's contours overlap, so the
+    # union is under test too): the limits leave a third at 0.5x and tens of
+    # texels elsewhere, for a newer Mesa.
     gateApp = pkgs.writeShellApplication {
       name = "wow-font-gate";
       text = let
@@ -294,7 +295,7 @@
           ${font "Roboto-Regular" 32 1} \
           ${font "Roboto-Regular" 14 0} \
           ${font "Roboto-Bold" 20 1} \
-          --max-gross 0.5:3.5,1:0.05,2:0.4,4:0.12 \
+          --max-gross 0.5:0.4,1:0.02,2:0.02,4:0.02 \
           "$@"
       '';
     };
