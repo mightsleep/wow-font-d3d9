@@ -69,24 +69,61 @@ record on the next start (`src/cache.rs`, `src/record.rs`).
 
 ## Cost
 
-Measured with `WOW_FONT_D3D9_TRACE=1` on an RTX 5060 laptop GPU and a
-Ryzen AI 5 340, Wine 11.19 and DXVK 3.1.1, in towns and menus:
+In the game, from `WOW_FONT_D3D9_TRACE=1` on an RTX 5060 laptop GPU and a
+Ryzen AI 5 340 under Wine 11.19 and DXVK 3.1.1: 628 five-second windows
+of play at about 160 frames a second. Ranges are the middle half of the
+windows unless said.
 
-- GPU: 0.14 to 0.57 ms of text per frame, 1.6 to 11.5 % of the frame;
-  with Chinese text on screen, 0.87 ms of a 3.2 ms frame.
-- CPU, per frame: 3 to 8 us in the texture bind hook.
-- A font's first upload with nothing on disk: up to 17.5 ms (48 Chinese
-  and 109 Latin cells, and the atlas growing). A 32 px cell's cover and
-  texel words take 0.1 to 0.4 ms of CPU; from disk they are only read.
-- Finding a font: 2 to 60 us per upload. The first in a session used to
-  search the client's image for 7 to 12 ms; it now looks where 12340 has
-  the list first, which has not been timed in the game yet.
+- GPU: text takes 0.52 ms of a frame at the median, 0.30 to 0.87 ms, and
+  0.23 to 1.28 ms from the 5th to the 95th percentile. That is 11.5 % of
+  the frame's GPU time (6.5 to 17.8 %). Text with a shadow is drawn
+  twice: the client sends the same quads again in black.
+- CPU, per frame: 8.5 us in the texture bind hook (7.6 to 10.5), for some
+  18 runs of text.
+- An upload of a glyph cache whose cells are known: one seen alone took
+  0.44 ms, 34 us to read the font's cells from the client, 76 to clear
+  the proxy's arrays, 206 to check and paste the cells, 112 to send the
+  three textures, and 58 before that to compare the upload with the
+  last. For a new cache, whose three textures are made then, the
+  clearing takes 0.35 to 1 ms.
+- The first time a font is seen at a size its cells are worked out on the
+  game's thread: passes of 17 and 19 ms were seen, with an encoder slower
+  than the table below has it and not timed in the game since. A font
+  file's first use in a session is 2 to 4 ms more (the client's own four
+  are loaded ahead, on a thread).
+- Finding a font: one read, 4 us, at an upload whose owner is known; a
+  walk of the client's fonts, 50 us, when it is not. The first in a
+  session used to search the client's image for 7 to 12 ms; it now looks
+  where 12340 has the list first, which has not been timed in the game.
+
+In the bench on the same GPU (`nix run .#bench`, Roboto Bold at 32 px
+with and without an outline and at 14 px): 0.15 ns a pixel for magnified
+text (1.5x, 2x) and 0.51 ns for minified (0.5x, 0.75x), where every
+pixel walks the bands. A glyph minified to half covers a sixteenth of
+the pixels it covers at 2x.
+
+The encoder on an x86_64 host, one thread, per glyph and per cell (the
+DLL is 32-bit and has not been timed):
+
+| font | a glyph's record, once | from the disk | a cell: cover and words |
+|---|---|---|---|
+| FRIZQT 12 px | 9.8 us | 0.4 us | 6.3 us |
+| FRIZQT 32 px | 9.9 us | 0.4 us | 14.8 us |
+| FRIZQT 32 px, outline 2 | 10.0 us | 0.4 us | 41.3 us |
+| LXGW WenKai 16 px, outline 1 | 42 us | 1.4 us | 68.1 us |
+| SKURRI 20 px, outline 1 | 76 us | 2.8 us | 102.9 us |
 
 Accuracy against an exact reference (the glyph's area in each pixel's
-box under the nonzero rule, from chords within 1/256 of the box),
-Roboto at 32 px with an outline, texels off by more than 16/255: 0 % at
-1x and 2x, 0.002 % at 4x (`nix run .#bench`, Mesa lavapipe). Contours
-that overlap, as Roboto's do, count once.
+box under the nonzero rule, from chords within 1/256 of the box) on the
+gate's fonts, Roboto at 32 px and Roboto Bold at 20 px with an outline
+and Roboto at 14 px without, in white and in black: texels off by more
+than 16/255 are 0.82 % at 0.5x, none at 1x and 2x, 0.001 % at 4x
+(`nix run .#gate`, Mesa lavapipe). Contours that overlap, as Roboto's
+do, count once. The reference takes an outline's alpha as the decoder
+defines it, a ramp over the distance. Against the true area of the
+widened glyph that ramp is off by more than 16/255 on 13 to 15 % of an
+outlined font's pixels at 0.5x, 0.6 to 1.2 % at 1x and 0.2 % or less
+from 2x up (radius 1.25, the decoder's CPU model).
 
 ## Building
 

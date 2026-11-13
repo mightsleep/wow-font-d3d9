@@ -113,13 +113,14 @@ Environment variables:
 
 Known, and not fixed:
 
-- It costs GPU time: 0.5 to 1.5 ms of a frame in my sessions (RTX 5060
-  laptop GPU under DXVK). Text with a shadow pays twice, since the client
-  draws the shadow as the same letters again in black.
+- It costs GPU time: half a millisecond of a frame at the median in my
+  sessions, 0.2 to 1.3 ms most of the time (RTX 5060 laptop GPU under
+  DXVK), about an eighth of the frame. Text with a shadow pays twice,
+  since the client draws the shadow as the same letters again in black.
 - The first time a font shows up at a size, its cells are worked out on
-  the game's thread: hitches of up to some 20 ms, once. After that they
-  come from a cache on disk, until the next update of the DLL changes
-  the encoder and the cache starts over.
+  the game's thread: hitches of up to some 20 ms were seen, once. After
+  that they come from a cache on disk, until the next update of the DLL
+  changes the encoder and the cache starts over.
 - An outline's alpha is a ramp over the distance to the glyph, which is
   the true area only for a straight edge wider than a pixel. Outlined
   text drawn at half size has about one pixel in seven off by more than
