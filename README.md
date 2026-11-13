@@ -250,7 +250,10 @@ caches built by the proxy's encoder through Direct3D 9 under Wine with
 DXVK, the road the game's text takes, and compares every pixel with the
 exact reference. `--ps NAME=FILE` adds a compiled shader to compare;
 `--lavapipe` runs on the CPU in a virtual X server. See
-`examples/bench.rs` for the rest of its arguments.
+`examples/bench.rs` for the rest of its arguments. `nix run .#gate` is
+the same as a test, the one CI runs: Roboto with and without an outline
+on lavapipe, failing when a scale has more texels off by over 16/255
+than its limit in `flake.nix`.
 
 `nix run .#asm` needs no GPU: for `shaders/decoder.hlsl` (or the `.hlsl`/`.ps3` files named) it prints the instructions, texture
 fetches, flow control, temporaries (vkd3d allows ps_3_0 32) and size;

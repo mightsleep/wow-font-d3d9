@@ -1,5 +1,8 @@
-# Everything is in the flake: the DLL, the host tests, the shader bytecode
-# against its HLSL, the DLL's imports and exports, the release zip.
+# Everything is in the flake: the DLL, clippy and rustfmt, the host tests,
+# the shader bytecode against its HLSL, the DLL's imports and exports, the
+# release zip. And the decoder against the exact reference under Wine on
+# lavapipe (nix run .#gate), which wants a Wine prefix in $HOME and so
+# runs outside the sandbox.
 name: ci
 on:
   push:
@@ -14,3 +17,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
       - run: nix flake check -L
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix run -L .#gate

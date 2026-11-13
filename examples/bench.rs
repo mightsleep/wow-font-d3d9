@@ -12,7 +12,11 @@
 //!
 //!   bench.exe --out DIR --ps NAME=FILE.ps3 ... --font FILE:PX:OUTLINE ...
 //!             [--scales 0.5,1,1.5,2] [--reps 10] [--rounds 7] [--no-time]
-//!             [--pages 3,7] [--chars TEXT]
+//!             [--pages 3,7] [--chars TEXT] [--max-gross 1:0.05,2:0.25]
+//!
+//! --max-gross SCALE:PCT,... makes it a test: exit 1 when a shader has
+//! more than PCT % of its text texels off the reference by over 16/255
+//! at that scale (`nix run .#gate`, in CI).
 
 #![allow(non_snake_case)]
 
@@ -1098,6 +1102,8 @@ fn main() {
     let (mut reps, mut rounds, mut time) = (10usize, 7usize, true);
     // Pages written as PNGs for every shader (NAME-pageN.png).
     let mut shown: Vec<usize> = Vec::new();
+    // Per scale, the most texels over 16/255 against the reference, in %.
+    let mut limits: Vec<(f32, f64)> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| panic!("{} wants a value", a));
@@ -1131,6 +1137,15 @@ fn main() {
             "--no-time" => time = false,
             "--chars" => CHAR_SET.set(val()).unwrap(),
             "--pages" => shown = val().split(',').map(|s| s.parse().expect("page")).collect(),
+            "--max-gross" => {
+                limits = val()
+                    .split(',')
+                    .map(|s| {
+                        let (scale, pct) = s.split_once(':').expect("--max-gross SCALE:PCT");
+                        (scale.parse().expect("scale"), pct.parse().expect("pct"))
+                    })
+                    .collect()
+            }
             _ => panic!("unknown argument {}", a),
         }
     }
@@ -1318,4 +1333,26 @@ fn main() {
     }
     print!("{}", report);
     let _ = std::fs::write(out.join("report.txt"), report);
+
+    let mut over = 0;
+    for (si, (name, _)) in shaders.iter().enumerate() {
+        for &(scale, max) in &limits {
+            let sc = scales
+                .iter()
+                .position(|&s| s == scale)
+                .unwrap_or_else(|| panic!("--max-gross {}: not among --scales", scale));
+            let e = &vs_exact[si].1[sc];
+            let pct = 100.0 * e.gross as f64 / e.text.max(1) as f64;
+            if pct > max {
+                eprintln!(
+                    "{} at {}x: {:.3} % over 16/255, the limit is {} %",
+                    name, scale, pct, max
+                );
+                over += 1;
+            }
+        }
+    }
+    if over > 0 {
+        std::process::exit(1);
+    }
 }

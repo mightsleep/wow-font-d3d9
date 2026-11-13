@@ -37,6 +37,9 @@
       rust.targets.${target}.stable.rust-std
     ];
     craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+    # clippy and rustfmt for the checks; the DLL's toolchain stays as it is.
+    lintToolchain = rust.combine [toolchain rust.stable.clippy rust.stable.rustfmt];
+    craneLint = craneLib.overrideToolchain lintToolchain;
 
     # The target's alone, so that a host build in the dev shell (the tests:
     # cargo test-host) links against the host's libgcc, not rust-mingw's.
@@ -68,9 +71,11 @@
         nativeBuildInputs = [mingw];
       };
 
+    deps = craneLib.buildDepsOnly common;
+
     dll = craneLib.buildPackage (common
       // {
-        cargoArtifacts = craneLib.buildDepsOnly common;
+        cargoArtifacts = deps;
         installPhaseCommand = ''
           install -Dm644 target/${target}/release/d3d9.dll $out/d3d9.dll
         '';
@@ -113,8 +118,16 @@
           '';
         });
 
+    # The DLL's code as Windows builds it, warnings as errors (the allowed
+    # lints are in Cargo.toml).
+    clippy = craneLint.cargoClippy (common
+      // {
+        cargoArtifacts = deps;
+        cargoClippyExtraArgs = "-- -D warnings";
+      });
+
     # The encoder's and the cache records' invariants, on the host.
-    tests = craneLib.cargoTest {
+    testCrate = {
       pname = "wow-font-d3d9-tests";
       version = "0.0.0";
       src = lib.fileset.toSource {
@@ -134,6 +147,21 @@
       cargoVendorDir = craneLib.vendorCargoDeps {cargoLock = ./tests/Cargo.lock;};
       cargoExtraArgs = "--manifest-path tests/Cargo.toml";
     };
+    tests = craneLib.cargoTest testCrate;
+    clippyTests = craneLint.cargoClippy (testCrate // {cargoClippyExtraArgs = "--all-targets -- -D warnings";});
+
+    # Every .rs as rustfmt has it: the DLL, the bench, build.rs, the tests.
+    fmt = pkgs.runCommand "rustfmt" {nativeBuildInputs = [lintToolchain];} ''
+      cd ${lib.fileset.toSource {
+        root = ./.;
+        fileset =
+          lib.fileset.intersection
+          (lib.fileset.unions [./build.rs ./src ./tests ./examples])
+          (lib.fileset.fileFilter (f: f.hasExt "rs") ./.);
+      }}
+      rustfmt --check --edition 2024 $(find . -name '*.rs' | LC_ALL=C sort)
+      touch $out
+    '';
 
     # The shaders as committed: name, profile, extension.
     shaderList = "decoder:ps_3_0:ps3 bench:vs_3_0:vs3 bench_uv:ps_3_0:ps3";
@@ -250,6 +278,26 @@
       '';
     };
 
+    # The bench as a test, for CI: the committed decoder on lavapipe against
+    # the exact reference, Roboto with and without an outline, failing when
+    # a scale has more texels off by over 16/255 than its limit. The limits
+    # are about a third over what the decoder does now (2.76, 0, 0.29 and
+    # 0.08 %): a real regression trips them, a newer Mesa does not.
+    gateApp = pkgs.writeShellApplication {
+      name = "wow-font-gate";
+      text = let
+        font = f: px: outline: "--font 'Z:${pkgs.roboto}/share/fonts/truetype/${f}.ttf:${toString px}:${toString outline}'";
+      in ''
+        exec ${benchApp}/bin/wow-font-bench --lavapipe --no-time \
+          --scales 0.5,1,2,4 \
+          ${font "Roboto-Regular" 32 1} \
+          ${font "Roboto-Regular" 14 0} \
+          ${font "Roboto-Bold" 20 1} \
+          --max-gross 0.5:3.5,1:0.05,2:0.4,4:0.12 \
+          "$@"
+      '';
+    };
+
     # What the DLL imports and exports, exactly: a runtime DLL creeping in
     # (mcfgthread, winpthread, libgcc) would make it fail to load on a
     # machine without one.
@@ -291,6 +339,11 @@
         program = "${benchApp}/bin/wow-font-bench";
         meta.description = "The decoder against an exact reference, under Wine";
       };
+      gate = {
+        type = "app";
+        program = "${gateApp}/bin/wow-font-gate";
+        meta.description = "The bench as a test: the decoder within its error limits on lavapipe";
+      };
       shaders = {
         type = "app";
         program = "${shadersApp}/bin/wow-font-shaders";
@@ -303,7 +356,10 @@
       };
     };
 
-    checks.${system} = {inherit dll tests shaders pe release;};
+    checks.${system} = {
+      inherit dll tests shaders pe release clippy fmt;
+      clippy-tests = clippyTests;
+    };
 
     devShells.${system}.default = pkgs.mkShell (cross
       // {
