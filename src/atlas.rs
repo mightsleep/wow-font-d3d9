@@ -620,6 +620,10 @@ fn chords(pieces: &[Quad], outline: &[Quad]) -> Vec<Vec<P>> {
 /// texels within the cutoff of its box.
 fn centre_d2(lines: &[Vec<P>], w: u32, h: u32, cut: f32) -> Vec<f32> {
     let mut d2 = vec![cut * cut; (w * h) as usize];
+    // A chord's texel columns as x from its start: the same for each of
+    // its rows, and a row is then floats side by side, four at a time to
+    // the compiler.
+    let mut pxs: Vec<f32> = Vec::new();
     for line in lines {
         for s in 0..line.len() {
             let (a, b) = (line[s], line[(s + 1) % line.len()]);
@@ -631,19 +635,22 @@ fn centre_d2(lines: &[Vec<P>], w: u32, h: u32, cut: f32) -> Vec<f32> {
                 let hi = ((u.max(v) + cut - 0.5).floor() + 1.0).clamp(0.0, m as f32) as u32;
                 lo..hi.max(lo)
             };
+            let xs = span(a[0], b[0], w);
+            pxs.clear();
+            pxs.extend(xs.clone().map(|x| x as f32 + 0.5 - a[0]));
             for y in span(a[1], b[1], h) {
                 let py = y as f32 + 0.5 - a[1];
-                let row = &mut d2[(y * w) as usize..((y + 1) * w) as usize];
-                for x in span(a[0], b[0], w) {
-                    let px = x as f32 + 0.5 - a[0];
-                    let t = if l > 0.0 {
-                        ((px * e[0] + py * e[1]) / l).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let (dx, dy) = (px - e[0] * t, py - e[1] * t);
-                    let v = &mut row[x as usize];
-                    *v = v.min(dx * dx + dy * dy);
+                let row = &mut d2[(y * w + xs.start) as usize..(y * w + xs.end) as usize];
+                if l > 0.0 {
+                    for (v, &px) in row.iter_mut().zip(&pxs) {
+                        let t = ((px * e[0] + py * e[1]) / l).clamp(0.0, 1.0);
+                        let (dx, dy) = (px - e[0] * t, py - e[1] * t);
+                        *v = v.min(dx * dx + dy * dy);
+                    }
+                } else {
+                    for (v, &px) in row.iter_mut().zip(&pxs) {
+                        *v = v.min(px * px + py * py);
+                    }
                 }
             }
         }
@@ -1027,7 +1034,7 @@ fn side_runs(
 
 /// A set of an outline's pieces, a bit each, in W words of 32: the DLL's
 /// word, and the host's tests run the same.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Set<const W: usize>([u32; W]);
 
 impl<const W: usize> Set<W> {
@@ -1121,24 +1128,30 @@ struct Side {
     backdrop: i32,
 }
 
-/// side_runs with the row's and the column's sets made: `f` the row's
-/// pieces, `spans` those across all E's rows, `beyond` and `past` the
-/// column's on the side asked and on the other, `near` the texel's.
+/// What side_runs sorts a side's pieces into, from the row's and the
+/// column's sets: `f` the row's pieces, `spans` those across all E's
+/// rows, `beyond` and `past` the column's on the side asked and on the
+/// other, `near` the texel's. The needed ones, and those behind.
 #[inline]
-fn side_sets<const W: usize>(
+fn side_pieces<const W: usize>(
     f: Set<W>,
     spans: Set<W>,
     beyond: Set<W>,
     past: Set<W>,
     near: Set<W>,
     up: Set<W>,
-    n: usize,
-) -> Side {
+) -> (Set<W>, Set<W>) {
     let behind = f.and(beyond).and(spans);
     let mut needed = f.less(past).less(behind);
     if needed.any() || behind.wind(up) == 0 {
         needed = needed.or(near);
     }
+    (needed, behind)
+}
+
+/// side_runs' runs and backdrop for a side's pieces (side_pieces).
+#[inline]
+fn side_sets<const W: usize>(needed: Set<W>, behind: Set<W>, up: Set<W>, n: usize) -> Side {
     // The three largest gaps, larger first, ties to the first: a key each
     // (a mark, the gap, the piece before it from the top, the piece
     // after; 9 bits each, hence Set::MAX), the largest three kept by min
@@ -1281,6 +1294,11 @@ fn words_by_sets<const W: usize>(
         } else {
             Set::NONE
         };
+        // A texel's word comes of its row's sets and three of its own (the
+        // row's pieces left and right of E, and the near ones): the same
+        // three as the texel before, the same word. Along a straight edge
+        // or inside a stem that is most texels.
+        let mut last: Option<([Set<W>; 3], [u16; 4])> = None;
         for tx in 0..w {
             let col = &columns[tx as usize];
             let t = [col.t[0], col.t[1], t2, t3];
@@ -1308,27 +1326,38 @@ fn words_by_sets<const W: usize>(
             // Most texels need nothing: no piece across E, and on one side
             // none that ends within its rows (left first).
             let sides = [f.and(col.left), f.and(col.right)];
+            let key = [sides[0], sides[1], near];
+            if let Some((k, word)) = last
+                && k == key
+            {
+                words.push(word);
+                continue;
+            }
+            let mut word = None;
             if !f.less(col.left).less(col.right).any() {
                 let none =
                     |s: Set<W>| !s.less(spans).any() && (s.and(spans).wind(up) != 0 || !near.any());
-                if let Some(side) = (0..2).find(|&i| none(sides[i])) {
-                    words.push(word_none(sides[side].and(spans).wind(up), side));
-                    continue;
-                }
+                word = (0..2)
+                    .find(|&i| none(sides[i]))
+                    .map(|side| word_none(sides[side].and(spans).wind(up), side));
             }
-            // The left's runs, and the right's only if it may read fewer.
-            let l = side_sets(f, spans, col.left, col.right, near, up, n);
-            let (side, right) = if l.cost > 0 {
-                let r = side_sets(f, spans, col.right, col.left, near, up, n);
-                if r.cost < l.cost {
-                    (r, true)
-                } else {
-                    (l, false)
+            let word = word.unwrap_or_else(|| {
+                // The left's runs, and the right's only if it may read
+                // fewer: its runs read every piece it needs at least, so
+                // with as many of those as the left reads it cannot.
+                let (needed, behind) = side_pieces(f, spans, col.left, col.right, near, up);
+                let l = side_sets(needed, behind, up, n);
+                let (needed, behind) = side_pieces(f, spans, col.right, col.left, near, up);
+                if l.cost > 0 && (needed.count() as usize) < l.cost {
+                    let r = side_sets(needed, behind, up, n);
+                    if r.cost < l.cost {
+                        return word_of(&r.runs[..r.m], r.backdrop, true, ring);
+                    }
                 }
-            } else {
-                (l, false)
-            };
-            words.push(word_of(&side.runs[..side.m], side.backdrop, right, ring));
+                word_of(&l.runs[..l.m], l.backdrop, false, ring)
+            });
+            last = Some((key, word));
+            words.push(word);
         }
     }
     Some(words)

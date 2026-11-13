@@ -299,13 +299,16 @@ fn wheel(teeth: usize) -> Vec<Quad> {
 /// width of set that holds the outline (the DLL takes the narrowest), and
 /// texel_words' are them too: the outlines of the other tests, random
 /// ones that cross themselves, wheels of 24 to 640 pieces (every width,
-/// and past the widest), and the test fonts; plain and outlined, on the
-/// texel grid and off it.
+/// and past the widest), a stem a texel wide, and the test fonts; plain
+/// and outlined, on the texel grid, off it and at the cell's edge.
 #[test]
 fn texel_words_sets_match_lists() {
     let mut all = outlines();
     all.extend((0..40).map(|seed| random(seed, 32.0, 2.0)));
     all.extend([12, 20, 50, 100, 200, 320].map(|teeth| vec![wheel(teeth)]));
+    // A stem a texel wide at the cell's edge: every piece of a row is
+    // across its first texel, as nothing is in the empty row before.
+    all.push(vec![rect(0.0, 0.0, 1.0, 30.0, false)]);
     all.extend(
         test_fonts()
             .into_iter()
@@ -323,7 +326,7 @@ fn texel_words_sets_match_lists() {
             } else {
                 0.0
             };
-            for at in [[2.0, 32.0], [2.37, 31.81]] {
+            for at in [[2.0, 32.0], [2.37, 31.81], [0.2, 32.0]] {
                 let lists = texel_words_lists(&r, 34, 34, at, k, reach);
                 let sets = [
                     texel_words_sets::<1>(&r, 34, 34, at, k, reach),
@@ -567,6 +570,51 @@ fn a_cell_is_its_cover_and_its_words() {
                     words == texel_words(&r, 34, 34, at, k, reach_of(radius)),
                     "outline {i} radius {radius} at {at:?}: other words"
                 );
+            }
+        }
+    }
+}
+
+/// An outlined font's cover bytes (at 1, 2 and 4 texels a unit, radius
+/// 1.25): the fill in L as the plain byte without the gamma, and in A
+/// max(outline, fill) for the outline's ramp over the true distance from
+/// the texel's centre; a pure A only where that is 0 or 1.
+#[test]
+fn outlined_cover_bytes() {
+    let (g, radius) = (1.0 / 1.5, 1.25f32);
+    for (i, o) in outlines().iter().enumerate() {
+        let r = encode(o, None, true).unwrap();
+        for px in [1.0f32, 2.0, 4.0] {
+            let (w, h) = ((24.0 * px).ceil() as u32, (16.0 * px).ceil() as u32);
+            let exact = exact(&held(&r), px, w, h);
+            let at = [r.origin[0] * px, h as f32 - r.origin[1] * px];
+            let k = r.scale / px;
+            let cell = cover_cell(&r, w, h, at, k, radius, g);
+            for ty in 0..h {
+                for tx in 0..w {
+                    let at = 2 * ((h - 1 - ty) * w + tx) as usize;
+                    let (l, a) = (cell[at] as f32, cell[at + 1] as f32);
+                    let e = exact[(ty * w + tx) as usize].min(1.0);
+                    assert!(
+                        (l - e * 255.0).abs() <= 2.0
+                            || (l == 2.0 && e * 255.0 < 2.0)
+                            || (l == 254.0 && e * 255.0 > 254.0),
+                        "outline {i} at {px}: texel ({tx}, {ty}) fill {l}, covered {e}"
+                    );
+                    let c = [
+                        ((tx as f32 + 0.5) / px - r.origin[0]) * r.scale,
+                        ((ty as f32 + 0.5) / px - r.origin[1]) * r.scale,
+                    ];
+                    let d = distance(&r, c, (radius + 2.0) * k) / k;
+                    let want = (radius - d + 0.5).clamp(0.0, 1.0).max(e);
+                    // The byte back through the gamma; an edge's byte stops
+                    // at 1 and 254.
+                    let got = (a / 255.0).powf(1.5);
+                    assert!(
+                        (got - want).abs() <= 0.02,
+                        "outline {i} at {px}: texel ({tx}, {ty}) alpha {a} ({got}), want {want} at distance {d}"
+                    );
+                }
             }
         }
     }

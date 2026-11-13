@@ -187,7 +187,12 @@ keeps a ring (every piece in outline order, written twice so no run
 wraps), and a texel's word names three runs: the arcs between the three
 largest gaps among its needed pieces. Pieces swept in between add nothing
 or count in the run instead of the backdrop. The side with shorter runs
-wins. 17 % less text time in the game.
+wins. 17 % less text time in the game. On the CPU a texel's word
+comes of sets of pieces (a bit a piece: the row's, the column's left and
+right of E, the near ones), so two texels with the same sets have the
+same word, and along a straight edge the next texel mostly has; and the
+right side's runs are only worked out when it needs fewer pieces than the
+left's read, since runs read every piece they need at least.
 
 **16. A word that reads as nothing.** Four 16-bit integers
 (A16B16G16R16): per run `start * 16 + (count & 15)`, and in the fourth the
