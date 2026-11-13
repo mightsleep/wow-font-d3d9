@@ -478,3 +478,61 @@ fn accumulated_is_the_area() {
         }
     }
 }
+
+/// A record packed for the disk comes back whole (the texels bit for
+/// bit, the outline out of the ring), with what was packed beside it;
+/// words cut short, of an odd length or with a ring that is not theirs
+/// are no record.
+#[test]
+fn records_pack_and_unpack() {
+    let mut all = outlines();
+    all.extend(overlapping().into_iter().take(40));
+    all.extend([12, 100, 320].map(|teeth| vec![wheel(teeth)]));
+    for (i, o) in all.iter().enumerate() {
+        for outline in [false, true] {
+            let mut r = encode(o, None, outline).unwrap();
+            // As one the union gave up on, too: none of these is.
+            r.simple = i % 2 == 0;
+            let with = [1.5, -2.0, 300.25, i as f32];
+            let words = r.pack(with);
+            let (back, with_back) = Record::unpack(&words, r.scale).unwrap();
+            let bits =
+                |t: &[[f32; 4]]| -> Vec<u32> { t.iter().flatten().map(|f| f.to_bits()).collect() };
+            assert!(
+                bits(&back.texels) == bits(&r.texels)
+                    && back.outline == r.outline
+                    && back.origin == r.origin
+                    && back.scale == r.scale
+                    && back.simple == r.simple
+                    && with_back == with,
+                "outline {i}: the record came back another"
+            );
+            // Cut anywhere, it is none (or, by chance, never the same).
+            for cut in [
+                0,
+                1,
+                2,
+                7,
+                13,
+                words.len() / 2,
+                words.len() - 8,
+                words.len() - 1,
+            ] {
+                assert!(
+                    Record::unpack(&words[..cut], r.scale).is_none(),
+                    "outline {i}: {cut} of {} words read as a record",
+                    words.len()
+                );
+            }
+            // The ring's place and length are floats 8 and 9 (words 18..22).
+            for at in [18, 20] {
+                let mut bad = words.clone();
+                bad[at + 1] ^= 0x0080;
+                assert!(
+                    Record::unpack(&bad, r.scale).is_none(),
+                    "outline {i}: a ring moved"
+                );
+            }
+        }
+    }
+}

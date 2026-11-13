@@ -181,16 +181,38 @@ fn entry(fp: u64, data: &[u8], code: u32, scale: f32, outlined: bool) -> Option<
     if let Some(e) = GLYPHS.lock().unwrap().get(&(fp, code, outlined)) {
         return e.clone();
     }
-    let e = glyph::outline(data, code).and_then(|g| {
-        let record = atlas::encode(&g.contours, Some(scale), outlined)?;
+    // The record and the outline's box from the disk if they are there
+    // (or known to be none: no outline), else worked out and kept.
+    let bundle = cache::Params::glyphs(fp);
+    let key = cache::Key {
+        code,
+        dx: outlined as u32,
+        top: 0,
+        w: 0,
+        h: 0,
+    };
+    let kept = match cache::get(&bundle, key) {
+        Some(Some(words)) => atlas::Record::unpack(&words, scale).map(Some),
+        Some(None) => Some(None),
+        None => None,
+    };
+    let made = kept.unwrap_or_else(|| {
+        let made = glyph::outline(data, code).and_then(|g| {
+            let record = atlas::encode(&g.contours, Some(scale), outlined)?;
+            Some((record, g.bbox))
+        });
+        let words = made.as_ref().map(|(r, bbox)| r.pack(*bbox));
+        // A record counts its words in 16 bits.
+        if words.as_ref().is_none_or(|w| w.len() <= u16::MAX as usize) {
+            cache::put(&bundle, key, words.as_deref());
+        }
+        made
+    });
+    let e = made.map(|(record, bbox)| {
         let mut a = ATLAS.lock().unwrap();
         let slot = a.texels.len() as u32;
         a.texels.extend_from_slice(&record.texels);
-        Some(Arc::new(Entry {
-            slot,
-            record,
-            bbox: g.bbox,
-        }))
+        Arc::new(Entry { slot, record, bbox })
     });
     GLYPHS
         .lock()

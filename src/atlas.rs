@@ -46,6 +46,61 @@ pub struct Record {
     pub simple: bool,
 }
 
+impl Record {
+    /// The record as 16-bit words for the disk (cache.rs), so that a
+    /// glyph is encoded once, not once a session: whether it is simple,
+    /// then as floats (the bits' low word first) `with`, which the caller
+    /// keeps beside the record (the outline's box), the origin and the
+    /// texels as they go to the GPU. Neither the outline, which the ring
+    /// holds, nor the scale, which is the font's.
+    pub fn pack(&self, with: [f32; 4]) -> Vec<u16> {
+        let floats = with
+            .iter()
+            .chain(&self.origin)
+            .chain(self.texels.iter().flatten());
+        let mut v = vec![self.simple as u16, 0];
+        v.extend(floats.flat_map(|f| [f.to_bits() as u16, (f.to_bits() >> 16) as u16]));
+        v
+    }
+
+    /// pack's inverse for a font of `scale`: the record and what was
+    /// packed with it. None for words that are no record (the cache
+    /// checks their sum, this their shape).
+    pub fn unpack(v: &[u16], scale: f32) -> Option<(Record, [f32; 4])> {
+        let (&[simple, 0], rest) = v.split_first_chunk::<2>()? else {
+            return None;
+        };
+        let (floats, []) = rest.as_chunks::<2>() else {
+            return None;
+        };
+        let floats: Vec<f32> = floats
+            .iter()
+            .map(|w| f32::from_bits(w[0] as u32 | (w[1] as u32) << 16))
+            .collect();
+        let (head, texels) = floats.split_first_chunk::<6>()?;
+        let (texels, []) = texels.as_chunks::<4>() else {
+            return None;
+        };
+        // The ring: every piece in outline order, twice, at the end.
+        let &[_, _, ring, n] = texels.first()?;
+        if simple > 1 || !(ring >= 1.0 && n >= 1.0 && ring + 2.0 * n == texels.len() as f32) {
+            return None;
+        }
+        let ring = ring as usize;
+        let record = Record {
+            texels: texels.to_vec(),
+            origin: [head[4], head[5]],
+            scale,
+            outline: texels[ring..ring + n as usize]
+                .iter()
+                .map(piece_of)
+                .collect(),
+            simple: simple == 1,
+        };
+        Some((record, [head[0], head[1], head[2], head[3]]))
+    }
+}
+
 /// Split a quadratic at its extremum along `axis` if inside it, so that
 /// each part is monotone there. At the extremum the tangent is parallel
 /// to the other axis, so both new control points take the split point's
@@ -95,6 +150,25 @@ fn piece_texel(q: &Quad) -> [f32; 4] {
             acc * COARSE + (v - (v / COARSE).floor() * COARSE)
         });
     [hi(q[0]), hi(q[1]), hi(q[2]), low]
+}
+
+/// piece_texel's inverse, as the shader takes a piece apart: the low
+/// nibbles come off the fourth float first coordinate first.
+fn piece_of(v: &[f32; 4]) -> Quad {
+    let mut low = v[3];
+    let mut nibble = || {
+        let rest = (low / COARSE).floor();
+        let n = low - rest * COARSE;
+        low = rest;
+        n
+    };
+    let mut q = [[0.0; 2]; 3];
+    for (p, &hi) in q.iter_mut().zip(v) {
+        let x = (hi / PACK).floor();
+        p[0] = x * COARSE + nibble();
+        p[1] = (hi - x * PACK) * COARSE + nibble();
+    }
+    q
 }
 
 /// The record of an outline in sqrt(pieces) bands (which measured best);

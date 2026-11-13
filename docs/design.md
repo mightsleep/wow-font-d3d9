@@ -207,7 +207,11 @@ decoder interpolates at the centroid, inside the covered part.
 crash's cut tail is truncated at the next start. A font is named by its
 table directory and length (a 26 MB font is not read to be identified),
 and the key includes a hash of the encoder's sources (`build.rs`), so a
-changed encoder never asks for old files.
+changed encoder never asks for old files. A glyph's record goes there
+too, one a font whatever the size, as the texels the GPU takes: what is
+read is what is used, and the outline comes back out of the ring. A
+record read is 0.4 us where parsing and encoding the glyph were 10.6
+(Latin), 1.4 for 44 (CJK), every session.
 
 **19. Check the reference.** Chords within 1/256 texel leave 4e-3 of
 area error next to a curve, so the tests cut curves 16 ways and integrate
