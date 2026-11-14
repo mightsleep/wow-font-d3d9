@@ -183,10 +183,17 @@ fn real() -> Ptr {
         });
         let c = std::ffi::CString::new(path.clone()).unwrap_or_default();
         let h = unsafe { LoadLibraryA(c.as_ptr() as *const u8) };
+        // The path as asked for and the file the loader took for it: a bare
+        // name in WOW_FONT_D3D9_REAL is searched for.
         log(&format!(
-            "real d3d9: {} -> {:?}; glyph cache hooks {}",
+            "real d3d9: {} -> {:?}{}; glyph cache hooks {}",
             path,
             h,
+            if h.is_null() {
+                String::new()
+            } else {
+                format!(" ({})", module_path(h))
+            },
             if enabled() { "on" } else { "off" }
         ));
         h as usize
@@ -202,6 +209,100 @@ fn real_fn(name: &[u8]) -> Ptr {
     unsafe { GetProcAddress(m, name.as_ptr()) }
 }
 
+// ---- what a log sent in has to say about the machine -------------------
+
+/// The WOW_FONT_D3D9 variables the process was started with: a start from
+/// a .bat and one from the exe differ in these and in nothing else here.
+fn environment() -> String {
+    let mut set: Vec<String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("WOW_FONT_D3D9"))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    set.sort();
+    if set.is_empty() {
+        "none of the WOW_FONT_D3D9 variables set".into()
+    } else {
+        set.join(", ")
+    }
+}
+
+/// A module's file, as the loader found it.
+fn module_path(module: Ptr) -> String {
+    let mut buf = [0u8; 260];
+    let n = unsafe { GetModuleFileNameA(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    String::from_utf8_lossy(&buf[..n.min(buf.len())]).into_owned()
+}
+
+const D3D_GET_ADAPTER_IDENTIFIER: usize = 5;
+
+/// The adapter's description and driver, as D3DADAPTER_IDENTIFIER9 has
+/// them: the driver's file and the description, 512 bytes each, the
+/// version at 1056, the vendor and device ids after it.
+unsafe fn adapter(d3d: Ptr, adapter: u32) -> String {
+    let mut id = [0u64; 138];
+    let f: unsafe extern "system" fn(Ptr, u32, u32, *mut u64) -> HRESULT =
+        unsafe { std::mem::transmute(D3D.orig(D3D_GET_ADAPTER_IDENTIFIER)) };
+    let r = unsafe { f(d3d, adapter, 0, id.as_mut_ptr()) };
+    if r < 0 {
+        return format!("GetAdapterIdentifier {r:#x}");
+    }
+    let b: &[u8] = unsafe { std::slice::from_raw_parts(id.as_ptr() as *const u8, 1104) };
+    let text =
+        |s: &[u8]| String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or(&[])).into_owned();
+    let ver = u64::from_le_bytes(b[1056..1064].try_into().unwrap());
+    let u = |at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+    format!(
+        "{} ({}), driver {}.{}.{}.{}, vendor {:#06x} device {:#06x}",
+        text(&b[512..1024]),
+        text(&b[..512]),
+        ver >> 48,
+        (ver >> 32) & 0xffff,
+        (ver >> 16) & 0xffff,
+        ver & 0xffff,
+        u(1064),
+        u(1068)
+    )
+}
+
+/// D3DPRESENT_PARAMETERS in words: fourteen fields of four bytes in a
+/// 32-bit process. Read after the call, when the runtime has filled in
+/// what the client left to it (a window's size, the format).
+pub(crate) unsafe fn present_params(params: Ptr) -> String {
+    if params.is_null() {
+        return "no present parameters".into();
+    }
+    let p: [u32; 14] = unsafe { std::ptr::read_unaligned(params as *const [u32; 14]) };
+    let format = |f: u32| match f {
+        0 => "unknown".to_string(),
+        21 => "A8R8G8B8".into(),
+        22 => "X8R8G8B8".into(),
+        23 => "R5G6B5".into(),
+        35 => "A2R10G10B10".into(),
+        75 => "D24S8".into(),
+        77 => "D24X8".into(),
+        80 => "D16".into(),
+        n => format!("format {n}"),
+    };
+    format!(
+        "{}x{} {}, {}, {} back buffer(s), multisample {} (quality {}), swap effect {}, depth {}, refresh {} Hz, interval {:#x}, flags {:#x}",
+        p[0],
+        p[1],
+        format(p[2]),
+        if p[8] != 0 { "windowed" } else { "fullscreen" },
+        p[3],
+        p[4],
+        p[5],
+        p[6],
+        if p[9] != 0 {
+            format(p[10])
+        } else {
+            "none".into()
+        },
+        p[12],
+        p[13],
+        p[11]
+    )
+}
 // ---- loading ----------------------------------------------------------
 
 const GET_MODULE_HANDLE_EX_FLAG_PIN: u32 = 1;
@@ -234,6 +335,7 @@ pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr)
                 today(),
                 pinned != 0
             ));
+            log(&format!("environment: {}", environment()));
             // panic = "abort" takes the game down without a word: say where.
             std::panic::set_hook(Box::new(|info| log_nowait(&format!("PANIC: {info}"))));
         }
@@ -452,6 +554,11 @@ unsafe extern "system" fn create_device(
         "CreateDevice(adapter {}, type {}, flags {:#x}) -> {:#x}",
         adapter, ty, flags, r
     ));
+    // Once a device: the client makes one more after a lost one.
+    log(&format!("adapter: {}", unsafe {
+        self::adapter(this, adapter)
+    }));
+    log(&format!("present: {}", unsafe { present_params(params) }));
     if r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
         unsafe { hook_device(*out) };
         unsafe { cursor::device(hwnd, params) };
