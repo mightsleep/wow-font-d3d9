@@ -17,7 +17,8 @@ here.
 - The log says what a report needs: the adapter and its driver, the
   device's present parameters (size, format, windowed or fullscreen) at
   creation and at every reset, the file the real `d3d9.dll` was loaded
-  from, and which `WOW_FONT_D3D9` variables were set.
+  from and whether it is DXVK, the Wine version under Wine, and which
+  `WOW_FONT_D3D9` variables were set.
 
 ## 0.2.0
 

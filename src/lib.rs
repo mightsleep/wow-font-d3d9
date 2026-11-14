@@ -49,6 +49,7 @@ unsafe extern "system" {
     fn GetSystemDirectoryA(buf: *mut u8, size: u32) -> u32;
     fn GetModuleFileNameA(module: Ptr, buf: *mut u8, size: u32) -> u32;
     fn GetModuleHandleExA(flags: u32, name: *const u8, module: *mut Ptr) -> i32;
+    fn GetModuleHandleA(name: *const u8) -> Ptr;
 }
 
 const D3DFMT_A4R4G4B4: u32 = 26;
@@ -192,7 +193,7 @@ fn real() -> Ptr {
             if h.is_null() {
                 String::new()
             } else {
-                format!(" ({})", module_path(h))
+                format!(" ({}), {}", module_path(h), whose(h))
             },
             if enabled() { "on" } else { "off" }
         ));
@@ -224,6 +225,43 @@ fn environment() -> String {
     } else {
         set.join(", ")
     }
+}
+
+/// Whose Direct3D 9 the real d3d9.dll is. Its path does not tell: DXVK is
+/// installed over the system's file as often as beside the game. DXVK
+/// exports names Microsoft's and Wine's do not, and Wine's ntdll says
+/// its version.
+fn whose(d3d9: Ptr) -> String {
+    let dxvk = unsafe {
+        !GetProcAddress(d3d9, c"DXVK_RegisterAnnotation".as_ptr() as *const u8).is_null()
+    };
+    let wine = wine_version();
+    match (dxvk, wine) {
+        (true, Some(w)) => format!("DXVK under Wine {w}"),
+        (true, None) => "DXVK".into(),
+        (false, Some(w)) => format!("not DXVK, under Wine {w}: wined3d, or another wrapper"),
+        (false, None) => "not DXVK: Windows' own, or another wrapper".into(),
+    }
+}
+
+/// Wine's version, if this is Wine: ntdll's wine_get_version, which
+/// Windows' ntdll does not have.
+fn wine_version() -> Option<String> {
+    let ntdll = unsafe { GetModuleHandleA(c"ntdll.dll".as_ptr() as *const u8) };
+    if ntdll.is_null() {
+        return None;
+    }
+    let f = unsafe { GetProcAddress(ntdll, c"wine_get_version".as_ptr() as *const u8) };
+    if f.is_null() {
+        return None;
+    }
+    let f: unsafe extern "C" fn() -> *const std::ffi::c_char = unsafe { std::mem::transmute(f) };
+    let v = unsafe { f() };
+    (!v.is_null()).then(|| {
+        unsafe { std::ffi::CStr::from_ptr(v) }
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
 /// A module's file, as the loader found it.
