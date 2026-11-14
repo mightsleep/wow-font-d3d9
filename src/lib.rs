@@ -229,12 +229,13 @@ fn environment() -> String {
 
 /// Whose Direct3D 9 the real d3d9.dll is. Its path does not tell: DXVK is
 /// installed over the system's file as often as beside the game. DXVK
-/// exports names Microsoft's and Wine's do not, and Wine's ntdll says
-/// its version.
+/// exports DXVK_RegisterAnnotation, by number only (28257, in its
+/// d3d9.def), which Wine's d3d9 has not; and Wine's ntdll says its
+/// version.
 fn whose(d3d9: Ptr) -> String {
-    let dxvk = unsafe {
-        !GetProcAddress(d3d9, c"DXVK_RegisterAnnotation".as_ptr() as *const u8).is_null()
-    };
+    // A name below 0x10000 is an ordinal to GetProcAddress.
+    const DXVK_REGISTER_ANNOTATION: usize = 28257;
+    let dxvk = unsafe { !GetProcAddress(d3d9, DXVK_REGISTER_ANNOTATION as *const u8).is_null() };
     let wine = wine_version();
     match (dxvk, wine) {
         (true, Some(w)) => format!("DXVK under Wine {w}"),
