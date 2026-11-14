@@ -154,11 +154,21 @@ Known, and not fixed:
 - Other mods that redraw the game's text (Lexara, TweakWoW2's HD Font,
   awesome_wotlk's MSDF mode) take the same draws. Use one at a time;
   nothing has been tried together with them.
+- Under another `d3d9.dll` that loads this one as its own real DLL, two
+  things go wrong. The client frees `d3d9.dll` and loads it again by
+  name, and if the DLL below this one is also called `d3d9.dll` (the
+  system's is), the client gets that one and skips both; a
+  `d3d9_real.dll` next to `Wow.exe` avoids it. And the proxy tells a
+  font by the texture pointer the client keeps: a wrapper that hands
+  the client stand-ins for its textures (Northlight does) leaves every
+  font unknown and the text the client's. I tried it once; the first is
+  solved, the second is not.
 
 Unknown ones are likelier than not. Open an
 [issue](https://github.com/mightsleep/wow-font-d3d9/issues) with
-`wow-font-d3d9.log`, your OS, GPU and driver (and Wine and DXVK versions
-on Linux), a screenshot, and the addons that draw the text in question.
+`wow-font-d3d9.log` (it names the GPU and its driver, and Wine and DXVK
+where they are), your OS, a screenshot, and the addons that draw the
+text in question.
 A screenshot with `v2 = 0` beside one with `v2 = 1` shows whether the
 problem is the proxy's.
 
