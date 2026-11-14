@@ -11,6 +11,7 @@
   };
 
   outputs = {
+    self,
     nixpkgs,
     crane,
     fenix,
@@ -76,6 +77,9 @@
     dll = craneLib.buildPackage (common
       // {
         cargoArtifacts = deps;
+        # The commit the DLL says it is in its log (build.rs). Here and not
+        # in `common`: the dependencies do not change with it.
+        WOW_FONT_D3D9_REV = self.shortRev or self.dirtyShortRev or "unknown";
         installPhaseCommand = ''
           install -Dm644 target/${target}/release/d3d9.dll $out/d3d9.dll
         '';
@@ -373,11 +377,15 @@
     pe = pkgs.runCommand "dll-imports-exports" {} ''
       dump=$(${objdump} -p ${dll}/d3d9.dll)
       imports=$(grep 'DLL Name' <<< "$dump" | awk '{print $3}' | LC_ALL=C sort | xargs)
-      want="KERNEL32.dll USERENV.dll WS2_32.dll api-ms-win-core-synch-l1-2-0.dll bcryptprimitives.dll msvcrt.dll ntdll.dll"
+      want="KERNEL32.dll USER32.dll USERENV.dll WS2_32.dll api-ms-win-core-synch-l1-2-0.dll bcryptprimitives.dll msvcrt.dll ntdll.dll"
       [ "$imports" = "$want" ] || { echo "imports: $imports"; echo "want:    $want"; exit 1; }
       exports=$(awk '/\+base\[/ && $NF != "RVA" {print $NF}' <<< "$dump" | LC_ALL=C sort | xargs)
       want="D3DPERF_BeginEvent D3DPERF_EndEvent D3DPERF_GetStatus D3DPERF_QueryRepeatFrame D3DPERF_SetMarker D3DPERF_SetOptions D3DPERF_SetRegion Direct3DCreate9 Direct3DCreate9Ex Direct3DShaderValidatorCreate9 DllMain"
       [ "$exports" = "$want" ] || { echo "exports: $exports"; echo "want:    $want"; exit 1; }
+      # The mark a loaded copy of the DLL is told by (src/below.rs): 0xD3D9,
+      # which objdump prints as a signed sixteen bits.
+      mark=$(awk '$1 == "MajorImageVersion" {print $2 % 65536 + ($2 < 0 ? 65536 : 0)}' <<< "$dump")
+      [ "$mark" = 54233 ] || { echo "MajorImageVersion: $mark, want 54233 (0xD3D9)"; exit 1; }
       touch $out
     '';
 

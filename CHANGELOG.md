@@ -3,6 +3,31 @@
 What a player would notice, newest first. The release notes are cut from
 here.
 
+## Unreleased
+
+- A `d3d9_real.dll` next to `Wow.exe` is the Direct3D 9 the proxy loads:
+  rename your DXVK or ReShade to that and no `.bat` is needed.
+  `WOW_FONT_D3D9_REAL` still names another file.
+- The proxy no longer loads itself. A copy of it under the name of the
+  real DLL, a wrapper that forwards back to it, or one that calls back
+  into it used to end the game without a word; now the system's
+  Direct3D 9 is used and the log says why.
+- `WOW_FONT_D3D9_CURSOR=1`: under Wine the client's hardware cursor
+  blinks while the mouse moves, since the client hides and shows it at
+  every move and Wine passes both on. With this the proxy answers the
+  window's cursor question itself and nothing is hidden. Off unless
+  asked for: it is the one thing the proxy does outside Direct3D 9.
+- The log no longer grows without end: past 2 MiB it starts again and
+  the old one is kept as `wow-font-d3d9.log.old`.
+- The log's `proxy attached` line carries the version, the commit and
+  the date, so a log sent in says which DLL wrote it and when.
+- The log says what a report needs: the adapter and its driver, the
+  device's present parameters (size, format, windowed or fullscreen) at
+  creation and at every reset, the file the real `d3d9.dll` was loaded
+  from, whether it is DXVK and which version, the Wine version under
+  Wine, and which
+  `WOW_FONT_D3D9` variables were set.
+
 ## 0.2.0
 
 Replace `d3d9.dll` with the new one. The cache in `Cache\wow-font-d3d9\`

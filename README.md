@@ -56,7 +56,9 @@ is a sample of one. I see no reason why it should happen:
 
 - It patches no code, in Wow.exe, in the real `d3d9.dll` or anywhere. It
   forwards every call and hooks Direct3D objects by pointing them at a
-  patched copy of their vtable. Nothing outside Direct3D 9 is hooked.
+  patched copy of their vtable. Nothing outside Direct3D 9 is hooked,
+  unless you ask for the cursor fix below, which puts a window
+  procedure in front of the client's.
 - It reads the client's font tables through `ReadProcessMemory` on its
   own process and writes nothing into the client's memory but those
   vtable pointers.
@@ -75,15 +77,18 @@ it forward calls and do nothing else.
    [latest release](https://github.com/mightsleep/wow-font-d3d9/releases/latest).
 2. Copy it next to `Wow.exe`.
 3. Start the game. A `wow-font-d3d9.log` next to `Wow.exe` says the proxy
-   loaded.
+   loaded. Runs append to it; past 2 MiB it starts again and the
+   old one is kept as `wow-font-d3d9.log.old`.
 
 The proxy loads the real `d3d9.dll` from the system directory. If you
-already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it,
-say to `d3d9_dxvk.dll`, and point `WOW_FONT_D3D9_REAL` at it. On Windows,
-start the game from a `.bat` next to `Wow.exe`:
+already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it
+to `d3d9_real.dll` before you copy the proxy in: a file of that name
+next to `Wow.exe` is the one the proxy loads, however the game is
+started. `WOW_FONT_D3D9_REAL` names another file, if you need one.
 
-    set WOW_FONT_D3D9_REAL=d3d9_dxvk.dll
-    start Wow.exe
+The log says which one it took and whether it is DXVK. If the file
+turns out to be the proxy itself (the wrong one renamed), it is left
+alone and the system's is used.
 
 Under Wine, tell it to take the DLL from the game folder:
 
@@ -116,9 +121,10 @@ Environment variables:
 | variable               | meaning |
 |------------------------|---------|
 | `WOW_FONT_D3D9`        | `0`: forward only |
-| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll` |
+| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll`, instead of `d3d9_real.dll` or the system's |
 | `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
 | `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
+| `WOW_FONT_D3D9_CURSOR` | `1`: under Wine, stop the hardware cursor blinking while the mouse moves |
 
 ## What is wrong with it
 
@@ -148,11 +154,21 @@ Known, and not fixed:
 - Other mods that redraw the game's text (Lexara, TweakWoW2's HD Font,
   awesome_wotlk's MSDF mode) take the same draws. Use one at a time;
   nothing has been tried together with them.
+- Under another `d3d9.dll` that loads this one as its own real DLL, two
+  things go wrong. The client frees `d3d9.dll` and loads it again by
+  name, and if the DLL below this one is also called `d3d9.dll` (the
+  system's is), the client gets that one and skips both; a
+  `d3d9_real.dll` next to `Wow.exe` avoids it. And the proxy tells a
+  font by the texture pointer the client keeps: a wrapper that hands
+  the client stand-ins for its textures (Northlight does) leaves every
+  font unknown and the text the client's. I tried it once; the first is
+  solved, the second is not.
 
 Unknown ones are likelier than not. Open an
 [issue](https://github.com/mightsleep/wow-font-d3d9/issues) with
-`wow-font-d3d9.log`, your OS, GPU and driver (and Wine and DXVK versions
-on Linux), a screenshot, and the addons that draw the text in question.
+`wow-font-d3d9.log` (it names the GPU and its driver, and Wine and DXVK
+where they are), your OS, a screenshot, and the addons that draw the
+text in question.
 A screenshot with `v2 = 0` beside one with `v2 = 1` shows whether the
 problem is the proxy's.
 

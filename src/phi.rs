@@ -426,7 +426,9 @@ unsafe extern "system" fn reset(dev: Ptr, params: Ptr) -> HRESULT {
         unsafe { std::mem::transmute(dev_orig(DEV_RESET)) };
     crate::trace::reset();
     let r = unsafe { f(dev, params) };
-    log(&format!("Reset -> {:#x}", r));
+    log(&format!("Reset -> {:#x}; present: {}", r, unsafe {
+        crate::present_params(params)
+    }));
     RECORDING.store(false, Relaxed);
     if r >= 0 {
         resync(dev);

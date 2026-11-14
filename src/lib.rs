@@ -1,20 +1,25 @@
 //! Proxy d3d9.dll. Sits next to Wow.exe, loads the real d3d9.dll
-//! ($WOW_FONT_D3D9_REAL, else the one in the system directory: Windows'
-//! own, or DXVK or wined3d under Wine) and forwards everything. Unless
+//! ($WOW_FONT_D3D9_REAL, else d3d9_real.dll next to Wow.exe, else the one
+//! in the system directory: Windows' own, or DXVK or wined3d under Wine;
+//! below.rs) and forwards everything. Unless
 //! WOW_FONT_D3D9=0 it writes vector glyphs into the client's glyph caches
 //! (256x256 A4R4G4B4 textures; texture, payload) and has them drawn by the
 //! decoder (phi, draw).
 //!
 //! Hooks point an object at a patched copy of its class's vtable (Class);
 //! no code anywhere is patched. Log: wow-font-d3d9.log next to Wow.exe.
+//! WOW_FONT_D3D9_CURSOR=1 adds the one hook outside Direct3D 9, a window
+//! procedure (cursor).
 
 #![allow(non_snake_case)]
 
 #[allow(dead_code)]
 mod atlas;
+mod below;
 mod cache;
 #[allow(dead_code)]
 mod coverage;
+mod cursor;
 mod draw;
 mod fontfile;
 mod fonts;
@@ -43,9 +48,9 @@ pub(crate) type Ptr = *mut c_void;
 unsafe extern "system" {
     pub(crate) fn LoadLibraryA(name: *const u8) -> Ptr;
     pub(crate) fn GetProcAddress(module: Ptr, name: *const u8) -> Ptr;
-    fn GetSystemDirectoryA(buf: *mut u8, size: u32) -> u32;
     fn GetModuleFileNameA(module: Ptr, buf: *mut u8, size: u32) -> u32;
     fn GetModuleHandleExA(flags: u32, name: *const u8, module: *mut Ptr) -> i32;
+    pub(crate) fn GetModuleHandleA(name: *const u8) -> Ptr;
 }
 
 const D3DFMT_A4R4G4B4: u32 = 26;
@@ -77,6 +82,33 @@ pub(crate) fn log(msg: &str) {
     write_log(msg, true);
 }
 
+/// Today in UTC as year-month-day, by the days since 1970 (the civil
+/// calendar from a day count, as in Hinnant's date algorithms).
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (y, m, d) = civil((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// (year, month, day) of the day that many days after 1970-01-01.
+fn civil(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// Where the log starts again: 2 MiB, a few weeks of play or a day with
+/// tracing on.
+const LOG_MAX: u64 = 2 << 20;
+
 /// A line only if the log is free right now: for the panic hook and the
 /// process's end, where whoever holds it may never let go (a thread
 /// killed at exit, or the panicking thread itself, inside log).
@@ -90,6 +122,15 @@ fn write_log(msg: &str, wait: bool) {
     static F: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
     let f = F.get_or_init(|| {
         let path = beside_exe("wow-font-d3d9.log");
+        // Runs append, so the last ones are there to send. A log past
+        // LOG_MAX starts again and the old one stays beside it as .old
+        // (the one before that goes): two files of a size to attach,
+        // however long the DLL has been in the folder.
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_MAX) {
+            let old = format!("{}.old", path);
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&path, &old);
+        }
         Mutex::new(
             std::fs::OpenOptions::new()
                 .create(true)
@@ -130,39 +171,142 @@ pub(crate) fn enabled() -> bool {
     *E.get_or_init(|| std::env::var("WOW_FONT_D3D9").map_or(true, |v| v != "0"))
 }
 
-/// The real d3d9.dll, loaded once.
-fn real() -> Ptr {
-    static R: OnceLock<usize> = OnceLock::new();
-    *R.get_or_init(|| {
-        let path = std::env::var("WOW_FONT_D3D9_REAL").unwrap_or_else(|_| {
-            let mut buf = [0u8; 260];
-            let n = unsafe { GetSystemDirectoryA(buf.as_mut_ptr(), buf.len() as u32) } as usize;
-            format!(
-                "{}\\d3d9.dll",
-                String::from_utf8_lossy(&buf[..n.min(buf.len())])
-            )
-        });
-        let c = std::ffi::CString::new(path.clone()).unwrap_or_default();
-        let h = unsafe { LoadLibraryA(c.as_ptr() as *const u8) };
-        log(&format!(
-            "real d3d9: {} -> {:?}; glyph cache hooks {}",
-            path,
-            h,
-            if enabled() { "on" } else { "off" }
-        ));
-        h as usize
-    }) as Ptr
-}
-
 /// A function of the real d3d9.dll by NUL-terminated name, or null.
 fn real_fn(name: &[u8]) -> Ptr {
-    let m = real();
+    let m = below::real();
     if m.is_null() {
         return std::ptr::null_mut();
     }
     unsafe { GetProcAddress(m, name.as_ptr()) }
 }
 
+/// A factory by NUL-terminated name: the real d3d9.dll's, or the system's
+/// for a call that came from below.
+fn factory(name: &[u8], from_below: bool) -> Ptr {
+    if !from_below {
+        return real_fn(name);
+    }
+    let m = below::system();
+    if m.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { GetProcAddress(m, name.as_ptr()) }
+}
+
+// ---- what a log sent in has to say about the machine -------------------
+
+/// The WOW_FONT_D3D9 variables the process was started with: a start from
+/// a .bat and one from the exe differ in these and in nothing else here.
+fn environment() -> String {
+    let mut set: Vec<String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("WOW_FONT_D3D9"))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    set.sort();
+    if set.is_empty() {
+        "none of the WOW_FONT_D3D9 variables set".into()
+    } else {
+        set.join(", ")
+    }
+}
+
+/// Wine's version, if this is Wine: ntdll's wine_get_version, which
+/// Windows' ntdll does not have.
+pub(crate) fn wine_version() -> Option<String> {
+    let ntdll = unsafe { GetModuleHandleA(c"ntdll.dll".as_ptr() as *const u8) };
+    if ntdll.is_null() {
+        return None;
+    }
+    let f = unsafe { GetProcAddress(ntdll, c"wine_get_version".as_ptr() as *const u8) };
+    if f.is_null() {
+        return None;
+    }
+    let f: unsafe extern "C" fn() -> *const std::ffi::c_char = unsafe { std::mem::transmute(f) };
+    let v = unsafe { f() };
+    (!v.is_null()).then(|| {
+        unsafe { std::ffi::CStr::from_ptr(v) }
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
+/// A module's file, as the loader found it.
+pub(crate) fn module_path(module: Ptr) -> String {
+    let mut buf = [0u8; 260];
+    let n = unsafe { GetModuleFileNameA(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    String::from_utf8_lossy(&buf[..n.min(buf.len())]).into_owned()
+}
+
+const D3D_GET_ADAPTER_IDENTIFIER: usize = 5;
+
+/// The adapter's description and driver, as D3DADAPTER_IDENTIFIER9 has
+/// them: the driver's file and the description, 512 bytes each, the
+/// version at 1056, the vendor and device ids after it.
+unsafe fn adapter(d3d: Ptr, adapter: u32) -> String {
+    let mut id = [0u64; 138];
+    let f: unsafe extern "system" fn(Ptr, u32, u32, *mut u64) -> HRESULT =
+        unsafe { std::mem::transmute(D3D.orig(D3D_GET_ADAPTER_IDENTIFIER)) };
+    let r = unsafe { f(d3d, adapter, 0, id.as_mut_ptr()) };
+    if r < 0 {
+        return format!("GetAdapterIdentifier {r:#x}");
+    }
+    let b: &[u8] = unsafe { std::slice::from_raw_parts(id.as_ptr() as *const u8, 1104) };
+    let text =
+        |s: &[u8]| String::from_utf8_lossy(s.split(|&c| c == 0).next().unwrap_or(&[])).into_owned();
+    let ver = u64::from_le_bytes(b[1056..1064].try_into().unwrap());
+    let u = |at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+    format!(
+        "{} ({}), driver {}.{}.{}.{}, vendor {:#06x} device {:#06x}",
+        text(&b[512..1024]),
+        text(&b[..512]),
+        ver >> 48,
+        (ver >> 32) & 0xffff,
+        (ver >> 16) & 0xffff,
+        ver & 0xffff,
+        u(1064),
+        u(1068)
+    )
+}
+
+/// D3DPRESENT_PARAMETERS in words: fourteen fields of four bytes in a
+/// 32-bit process. Read after the call, when the runtime has filled in
+/// what the client left to it (a window's size, the format).
+pub(crate) unsafe fn present_params(params: Ptr) -> String {
+    if params.is_null() {
+        return "no present parameters".into();
+    }
+    let p: [u32; 14] = unsafe { std::ptr::read_unaligned(params as *const [u32; 14]) };
+    let format = |f: u32| match f {
+        0 => "unknown".to_string(),
+        21 => "A8R8G8B8".into(),
+        22 => "X8R8G8B8".into(),
+        23 => "R5G6B5".into(),
+        35 => "A2R10G10B10".into(),
+        75 => "D24S8".into(),
+        77 => "D24X8".into(),
+        80 => "D16".into(),
+        n => format!("format {n}"),
+    };
+    format!(
+        "{}x{} {}, {}, {} back buffer(s), multisample {} (quality {}), swap effect {}, depth {}, refresh {} Hz, interval {:#x}, flags {:#x}",
+        p[0],
+        p[1],
+        format(p[2]),
+        if p[8] != 0 { "windowed" } else { "fullscreen" },
+        p[3],
+        p[4],
+        p[5],
+        p[6],
+        if p[9] != 0 {
+            format(p[10])
+        } else {
+            "none".into()
+        },
+        p[12],
+        p[13],
+        p[11]
+    )
+}
 // ---- loading ----------------------------------------------------------
 
 const GET_MODULE_HANDLE_EX_FLAG_PIN: u32 = 1;
@@ -173,9 +317,10 @@ const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 4;
 /// the same module name, and the second LoadLibrary("d3d9.dll") would find
 /// that one already loaded and never reach us.
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr) -> i32 {
+pub unsafe extern "system" fn DllMain(module: Ptr, reason: u32, _reserved: Ptr) -> i32 {
     match reason {
         1 => {
+            below::attached(module);
             let mut m: Ptr = std::ptr::null_mut();
             let pinned = unsafe {
                 GetModuleHandleExA(
@@ -184,7 +329,18 @@ pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr)
                     &mut m,
                 )
             };
-            log(&format!("proxy attached, pinned: {}", pinned != 0));
+            // The lines carry a time of day only: the date here tells one
+            // run from another; the version and the commit tell which
+            // DLL wrote them (a build between releases has the last
+            // release's version).
+            log(&format!(
+                "proxy attached: {} ({}), {} UTC, pinned: {}",
+                env!("CARGO_PKG_VERSION"),
+                env!("WOW_FONT_D3D9_REV"),
+                today(),
+                pinned != 0
+            ));
+            log(&format!("environment: {}", environment()));
             // panic = "abort" takes the game down without a word: say where.
             std::panic::set_hook(Box::new(|info| log_nowait(&format!("PANIC: {info}"))));
         }
@@ -200,7 +356,10 @@ pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr)
 
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
-    let f = real_fn(b"Direct3DCreate9\0");
+    // Entered again on this thread: the d3d9 below called back in
+    // (below.rs). It gets the system's object, as it is.
+    let entered = below::enter();
+    let f = factory(b"Direct3DCreate9\0", entered.again);
     if f.is_null() {
         log("Direct3DCreate9: real function missing");
         return std::ptr::null_mut();
@@ -208,7 +367,7 @@ pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
     let f: unsafe extern "system" fn(u32) -> Ptr = unsafe { std::mem::transmute(f) };
     let d3d = unsafe { f(sdk) };
     log(&format!("Direct3DCreate9({}) -> {:?}", sdk, d3d));
-    if enabled() && !d3d.is_null() {
+    if enabled() && !entered.again && !d3d.is_null() {
         unsafe { hook_d3d(d3d) };
     }
     d3d
@@ -216,14 +375,15 @@ pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Direct3DCreate9Ex(sdk: u32, out: *mut Ptr) -> HRESULT {
-    let f = real_fn(b"Direct3DCreate9Ex\0");
+    let entered = below::enter();
+    let f = factory(b"Direct3DCreate9Ex\0", entered.again);
     if f.is_null() {
         return D3DERR_NOTAVAILABLE;
     }
     let f: unsafe extern "system" fn(u32, *mut Ptr) -> HRESULT = unsafe { std::mem::transmute(f) };
     let r = unsafe { f(sdk, out) };
     log(&format!("Direct3DCreate9Ex({}) -> {:#x}", sdk, r));
-    if enabled() && r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
+    if enabled() && !entered.again && r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
         unsafe { hook_d3d(*out) };
     }
     r
@@ -403,8 +563,14 @@ unsafe extern "system" fn create_device(
         "CreateDevice(adapter {}, type {}, flags {:#x}) -> {:#x}",
         adapter, ty, flags, r
     ));
+    // Once a device: the client makes one more after a lost one.
+    log(&format!("adapter: {}", unsafe {
+        self::adapter(this, adapter)
+    }));
+    log(&format!("present: {}", unsafe { present_params(params) }));
     if r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
         unsafe { hook_device(*out) };
+        unsafe { cursor::device(hwnd, params) };
     }
     r
 }
@@ -419,6 +585,7 @@ unsafe fn hook_device(dev: Ptr) {
         [(DEV_CREATE_TEXTURE, create_texture as *const () as usize)].as_slice(),
         &phi::hooks(),
         &traced,
+        &cursor::hooks(),
     ]
     .concat();
     if !unsafe { DEVICE.adopt(dev, DEV_VTABLE, &hooks) } {
