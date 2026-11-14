@@ -1,6 +1,7 @@
 //! Proxy d3d9.dll. Sits next to Wow.exe, loads the real d3d9.dll
-//! ($WOW_FONT_D3D9_REAL, else the one in the system directory: Windows'
-//! own, or DXVK or wined3d under Wine) and forwards everything. Unless
+//! ($WOW_FONT_D3D9_REAL, else d3d9_real.dll next to Wow.exe, else the one
+//! in the system directory: Windows' own, or DXVK or wined3d under Wine;
+//! below.rs) and forwards everything. Unless
 //! WOW_FONT_D3D9=0 it writes vector glyphs into the client's glyph caches
 //! (256x256 A4R4G4B4 textures; texture, payload) and has them drawn by the
 //! decoder (phi, draw).
@@ -14,6 +15,7 @@
 
 #[allow(dead_code)]
 mod atlas;
+mod below;
 mod cache;
 #[allow(dead_code)]
 mod coverage;
@@ -46,10 +48,9 @@ pub(crate) type Ptr = *mut c_void;
 unsafe extern "system" {
     pub(crate) fn LoadLibraryA(name: *const u8) -> Ptr;
     pub(crate) fn GetProcAddress(module: Ptr, name: *const u8) -> Ptr;
-    fn GetSystemDirectoryA(buf: *mut u8, size: u32) -> u32;
     fn GetModuleFileNameA(module: Ptr, buf: *mut u8, size: u32) -> u32;
     fn GetModuleHandleExA(flags: u32, name: *const u8, module: *mut Ptr) -> i32;
-    fn GetModuleHandleA(name: *const u8) -> Ptr;
+    pub(crate) fn GetModuleHandleA(name: *const u8) -> Ptr;
 }
 
 const D3DFMT_A4R4G4B4: u32 = 26;
@@ -170,40 +171,22 @@ pub(crate) fn enabled() -> bool {
     *E.get_or_init(|| std::env::var("WOW_FONT_D3D9").map_or(true, |v| v != "0"))
 }
 
-/// The real d3d9.dll, loaded once.
-fn real() -> Ptr {
-    static R: OnceLock<usize> = OnceLock::new();
-    *R.get_or_init(|| {
-        let path = std::env::var("WOW_FONT_D3D9_REAL").unwrap_or_else(|_| {
-            let mut buf = [0u8; 260];
-            let n = unsafe { GetSystemDirectoryA(buf.as_mut_ptr(), buf.len() as u32) } as usize;
-            format!(
-                "{}\\d3d9.dll",
-                String::from_utf8_lossy(&buf[..n.min(buf.len())])
-            )
-        });
-        let c = std::ffi::CString::new(path.clone()).unwrap_or_default();
-        let h = unsafe { LoadLibraryA(c.as_ptr() as *const u8) };
-        // The path as asked for and the file the loader took for it: a bare
-        // name in WOW_FONT_D3D9_REAL is searched for.
-        log(&format!(
-            "real d3d9: {} -> {:?}{}; glyph cache hooks {}",
-            path,
-            h,
-            if h.is_null() {
-                String::new()
-            } else {
-                format!(" ({}), {}", module_path(h), whose(h))
-            },
-            if enabled() { "on" } else { "off" }
-        ));
-        h as usize
-    }) as Ptr
-}
-
 /// A function of the real d3d9.dll by NUL-terminated name, or null.
 fn real_fn(name: &[u8]) -> Ptr {
-    let m = real();
+    let m = below::real();
+    if m.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { GetProcAddress(m, name.as_ptr()) }
+}
+
+/// A factory by NUL-terminated name: the real d3d9.dll's, or the system's
+/// for a call that came from below.
+fn factory(name: &[u8], from_below: bool) -> Ptr {
+    if !from_below {
+        return real_fn(name);
+    }
+    let m = below::system();
     if m.is_null() {
         return std::ptr::null_mut();
     }
@@ -227,27 +210,9 @@ fn environment() -> String {
     }
 }
 
-/// Whose Direct3D 9 the real d3d9.dll is. Its path does not tell: DXVK is
-/// installed over the system's file as often as beside the game. DXVK
-/// exports DXVK_RegisterAnnotation, by number only (28257, in its
-/// d3d9.def), which Wine's d3d9 has not; and Wine's ntdll says its
-/// version.
-fn whose(d3d9: Ptr) -> String {
-    // A name below 0x10000 is an ordinal to GetProcAddress.
-    const DXVK_REGISTER_ANNOTATION: usize = 28257;
-    let dxvk = unsafe { !GetProcAddress(d3d9, DXVK_REGISTER_ANNOTATION as *const u8).is_null() };
-    let wine = wine_version();
-    match (dxvk, wine) {
-        (true, Some(w)) => format!("DXVK under Wine {w}"),
-        (true, None) => "DXVK".into(),
-        (false, Some(w)) => format!("not DXVK, under Wine {w}: wined3d, or another wrapper"),
-        (false, None) => "not DXVK: Windows' own, or another wrapper".into(),
-    }
-}
-
 /// Wine's version, if this is Wine: ntdll's wine_get_version, which
 /// Windows' ntdll does not have.
-fn wine_version() -> Option<String> {
+pub(crate) fn wine_version() -> Option<String> {
     let ntdll = unsafe { GetModuleHandleA(c"ntdll.dll".as_ptr() as *const u8) };
     if ntdll.is_null() {
         return None;
@@ -266,7 +231,7 @@ fn wine_version() -> Option<String> {
 }
 
 /// A module's file, as the loader found it.
-fn module_path(module: Ptr) -> String {
+pub(crate) fn module_path(module: Ptr) -> String {
     let mut buf = [0u8; 260];
     let n = unsafe { GetModuleFileNameA(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
     String::from_utf8_lossy(&buf[..n.min(buf.len())]).into_owned()
@@ -352,9 +317,10 @@ const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 4;
 /// the same module name, and the second LoadLibrary("d3d9.dll") would find
 /// that one already loaded and never reach us.
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr) -> i32 {
+pub unsafe extern "system" fn DllMain(module: Ptr, reason: u32, _reserved: Ptr) -> i32 {
     match reason {
         1 => {
+            below::attached(module);
             let mut m: Ptr = std::ptr::null_mut();
             let pinned = unsafe {
                 GetModuleHandleExA(
@@ -390,7 +356,10 @@ pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr)
 
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
-    let f = real_fn(b"Direct3DCreate9\0");
+    // Entered again on this thread: the d3d9 below called back in
+    // (below.rs). It gets the system's object, as it is.
+    let entered = below::enter();
+    let f = factory(b"Direct3DCreate9\0", entered.again);
     if f.is_null() {
         log("Direct3DCreate9: real function missing");
         return std::ptr::null_mut();
@@ -398,7 +367,7 @@ pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
     let f: unsafe extern "system" fn(u32) -> Ptr = unsafe { std::mem::transmute(f) };
     let d3d = unsafe { f(sdk) };
     log(&format!("Direct3DCreate9({}) -> {:?}", sdk, d3d));
-    if enabled() && !d3d.is_null() {
+    if enabled() && !entered.again && !d3d.is_null() {
         unsafe { hook_d3d(d3d) };
     }
     d3d
@@ -406,14 +375,15 @@ pub unsafe extern "system" fn Direct3DCreate9(sdk: u32) -> Ptr {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Direct3DCreate9Ex(sdk: u32, out: *mut Ptr) -> HRESULT {
-    let f = real_fn(b"Direct3DCreate9Ex\0");
+    let entered = below::enter();
+    let f = factory(b"Direct3DCreate9Ex\0", entered.again);
     if f.is_null() {
         return D3DERR_NOTAVAILABLE;
     }
     let f: unsafe extern "system" fn(u32, *mut Ptr) -> HRESULT = unsafe { std::mem::transmute(f) };
     let r = unsafe { f(sdk, out) };
     log(&format!("Direct3DCreate9Ex({}) -> {:#x}", sdk, r));
-    if enabled() && r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
+    if enabled() && !entered.again && r >= 0 && !out.is_null() && unsafe { !(*out).is_null() } {
         unsafe { hook_d3d(*out) };
     }
     r

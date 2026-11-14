@@ -15,10 +15,15 @@
 //! The proxy makes its own decoder when the device is made, and says so
 //! in wow-font-d3d9.log, which is printed at the end.
 //!
-//!   probe.exe [--strict]
+//!   probe.exe [--strict] [--itself]
 //!
 //! --strict makes it a test: exit 1 unless a device with ps_3_0 has a
 //! live validator and takes the decoder, from here and from the proxy.
+//!
+//! --itself puts a copy of the proxy beside it as d3d9_real.dll, the name
+//! it takes the d3d9 below from: the proxy has to see that the file is
+//! itself, leave it and use the system's (src/below.rs). With --strict,
+//! exit 1 if it does not say so.
 
 #![allow(non_snake_case)]
 
@@ -252,6 +257,11 @@ fn main() {
     let dir = dir.parent().expect("the exe's folder");
     let log = dir.join("wow-font-d3d9.log");
     let _ = std::fs::remove_file(&log);
+    let itself = std::env::args().any(|a| a == "--itself");
+    let copy = dir.join("d3d9_real.dll");
+    if itself {
+        std::fs::copy(dir.join("d3d9.dll"), &copy).expect("a copy of the proxy");
+    }
 
     let path = std::ffi::CString::new(dir.join("d3d9.dll").to_str().expect("path")).unwrap();
     let lib = unsafe { LoadLibraryA(path.as_ptr() as *const u8) };
@@ -330,6 +340,21 @@ fn main() {
         proxy_made - proxy_failed,
         proxy_failed
     );
+    if itself {
+        let _ = std::fs::remove_file(&copy);
+        let told = ours.contains("it is a copy of this proxy");
+        println!(
+            "d3d9_real.dll, a copy of the proxy: {}",
+            if told {
+                "left alone"
+            } else {
+                "NOT told from a real one"
+            }
+        );
+        if strict && !told {
+            std::process::exit(1);
+        }
+    }
     if strict && (!good || refused || proxy_made == 0 || proxy_failed != 0) {
         std::process::exit(1);
     }

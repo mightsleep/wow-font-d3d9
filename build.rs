@@ -38,6 +38,31 @@ fn main() {
         .unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=WOW_FONT_D3D9_REV={}", rev);
 
+    // The DLL's mark, where a loaded copy of it can be told by (src/below.rs):
+    // the image version in the PE header, 0xD3D9 and the crate's version
+    // in four, eight and four bits. Nothing else reads the field.
+    let part = |v: &str| -> u32 {
+        std::env::var(v)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    };
+    let minor = (part("CARGO_PKG_VERSION_MAJOR") & 0xf) << 12
+        | (part("CARGO_PKG_VERSION_MINOR") & 0xff) << 4
+        | (part("CARGO_PKG_VERSION_PATCH") & 0xf);
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-cdylib-link-arg=/VERSION:{}.{}", 0xD3D9, minor);
+    } else {
+        println!(
+            "cargo:rustc-cdylib-link-arg=-Wl,--major-image-version,{}",
+            0xD3D9
+        );
+        println!(
+            "cargo:rustc-cdylib-link-arg=-Wl,--minor-image-version,{}",
+            minor
+        );
+    }
+
     println!("cargo:rerun-if-changed=shaders/decoder.ps3");
     println!("cargo:rerun-if-changed=src/ports.rs");
     let code: Vec<u32> = std::fs::read("shaders/decoder.ps3")

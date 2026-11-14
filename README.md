@@ -81,12 +81,14 @@ it forward calls and do nothing else.
    old one is kept as `wow-font-d3d9.log.old`.
 
 The proxy loads the real `d3d9.dll` from the system directory. If you
-already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it,
-say to `d3d9_dxvk.dll`, and point `WOW_FONT_D3D9_REAL` at it. On Windows,
-start the game from a `.bat` next to `Wow.exe`:
+already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it
+to `d3d9_real.dll` before you copy the proxy in: a file of that name
+next to `Wow.exe` is the one the proxy loads, however the game is
+started. `WOW_FONT_D3D9_REAL` names another file, if you need one.
 
-    set WOW_FONT_D3D9_REAL=d3d9_dxvk.dll
-    start Wow.exe
+The log says which one it took and whether it is DXVK. If the file
+turns out to be the proxy itself (the wrong one renamed), it is left
+alone and the system's is used.
 
 Under Wine, tell it to take the DLL from the game folder:
 
@@ -119,7 +121,7 @@ Environment variables:
 | variable               | meaning |
 |------------------------|---------|
 | `WOW_FONT_D3D9`        | `0`: forward only |
-| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll` |
+| `WOW_FONT_D3D9_REAL`   | path of the real `d3d9.dll`, instead of `d3d9_real.dll` or the system's |
 | `WOW_FONT_D3D9_FONTS`  | one more folder to look for font files in |
 | `WOW_FONT_D3D9_TRACE`  | `1`: CPU and GPU times to the log every 5 s |
 | `WOW_FONT_D3D9_CURSOR` | `1`: under Wine, stop the hardware cursor blinking while the mouse moves |

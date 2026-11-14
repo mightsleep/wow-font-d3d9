@@ -382,6 +382,10 @@
       exports=$(awk '/\+base\[/ && $NF != "RVA" {print $NF}' <<< "$dump" | LC_ALL=C sort | xargs)
       want="D3DPERF_BeginEvent D3DPERF_EndEvent D3DPERF_GetStatus D3DPERF_QueryRepeatFrame D3DPERF_SetMarker D3DPERF_SetOptions D3DPERF_SetRegion Direct3DCreate9 Direct3DCreate9Ex Direct3DShaderValidatorCreate9 DllMain"
       [ "$exports" = "$want" ] || { echo "exports: $exports"; echo "want:    $want"; exit 1; }
+      # The mark a loaded copy of the DLL is told by (src/below.rs): 0xD3D9,
+      # which objdump prints as a signed sixteen bits.
+      mark=$(awk '$1 == "MajorImageVersion" {print $2 % 65536 + ($2 < 0 ? 65536 : 0)}' <<< "$dump")
+      [ "$mark" = 54233 ] || { echo "MajorImageVersion: $mark, want 54233 (0xD3D9)"; exit 1; }
       touch $out
     '';
 

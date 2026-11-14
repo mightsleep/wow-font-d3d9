@@ -55,3 +55,9 @@ jobs:
         run: |
           (Get-FileHash d3d9.dll -Algorithm SHA256).Hash.ToLower()
           ./probe.exe --strict
+      # A copy of the proxy as d3d9_real.dll, the name it takes the d3d9
+      # below from: it has to tell the file is itself and use the system's.
+      - name: Probe, with itself below
+        shell: pwsh
+        working-directory: probe
+        run: ./probe.exe --strict --itself
