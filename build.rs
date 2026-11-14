@@ -26,6 +26,18 @@ fn main() {
     }
     println!("cargo:rustc-env=WOW_FONT_ENCODER={:016x}", h);
 
+    // The commit, for the log's first line: a build between two releases
+    // has the last one's version. Given by the flake (the sandbox has no
+    // git), else asked of git, else unknown.
+    println!("cargo:rerun-if-env-changed=WOW_FONT_D3D9_REV");
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    let rev = std::env::var("WOW_FONT_D3D9_REV")
+        .ok()
+        .filter(|r| !r.is_empty())
+        .or_else(rev_of_git)
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=WOW_FONT_D3D9_REV={}", rev);
+
     println!("cargo:rerun-if-changed=shaders/decoder.ps3");
     println!("cargo:rerun-if-changed=src/ports.rs");
     let code: Vec<u32> = std::fs::read("shaders/decoder.ps3")
@@ -44,4 +56,17 @@ fn main() {
     let bytes: Vec<u8> = fixed.iter().flat_map(|w| w.to_le_bytes()).collect();
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("decoder.ps3");
     std::fs::write(out, bytes).expect("OUT_DIR/decoder.ps3");
+}
+
+/// HEAD's short hash, with -dirty if the tree differs from it.
+fn rev_of_git() -> Option<String> {
+    let git = |args: &[&str]| {
+        let o = std::process::Command::new("git").args(args).output().ok()?;
+        o.status
+            .success()
+            .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let rev = git(&["rev-parse", "--short=7", "HEAD"]).filter(|r| !r.is_empty())?;
+    let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    Some(if dirty { format!("{rev}-dirty") } else { rev })
 }

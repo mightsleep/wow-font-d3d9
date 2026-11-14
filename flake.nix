@@ -11,6 +11,7 @@
   };
 
   outputs = {
+    self,
     nixpkgs,
     crane,
     fenix,
@@ -76,6 +77,9 @@
     dll = craneLib.buildPackage (common
       // {
         cargoArtifacts = deps;
+        # The commit the DLL says it is in its log (build.rs). Here and not
+        # in `common`: the dependencies do not change with it.
+        WOW_FONT_D3D9_REV = self.shortRev or self.dirtyShortRev or "unknown";
         installPhaseCommand = ''
           install -Dm644 target/${target}/release/d3d9.dll $out/d3d9.dll
         '';

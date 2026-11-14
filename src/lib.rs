@@ -80,6 +80,29 @@ pub(crate) fn log(msg: &str) {
     write_log(msg, true);
 }
 
+/// Today in UTC as year-month-day, by the days since 1970 (the civil
+/// calendar from a day count, as in Hinnant's date algorithms).
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (y, m, d) = civil((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// (year, month, day) of the day that many days after 1970-01-01.
+fn civil(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
 /// Where the log starts again: 2 MiB, a few weeks of play or a day with
 /// tracing on.
 const LOG_MAX: u64 = 2 << 20;
@@ -200,7 +223,17 @@ pub unsafe extern "system" fn DllMain(_module: Ptr, reason: u32, _reserved: Ptr)
                     &mut m,
                 )
             };
-            log(&format!("proxy attached, pinned: {}", pinned != 0));
+            // The lines carry a time of day only: the date here tells one
+            // run from another; the version and the commit tell which
+            // DLL wrote them (a build between releases has the last
+            // release's version).
+            log(&format!(
+                "proxy attached: {} ({}), {} UTC, pinned: {}",
+                env!("CARGO_PKG_VERSION"),
+                env!("WOW_FONT_D3D9_REV"),
+                today(),
+                pinned != 0
+            ));
             // panic = "abort" takes the game down without a word: say where.
             std::panic::set_hook(Box::new(|info| log_nowait(&format!("PANIC: {info}"))));
         }

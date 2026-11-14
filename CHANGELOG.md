@@ -12,6 +12,8 @@ here.
   asked for: it is the one thing the proxy does outside Direct3D 9.
 - The log no longer grows without end: past 2 MiB it starts again and
   the old one is kept as `wow-font-d3d9.log.old`.
+- The log's `proxy attached` line carries the version, the commit and the date, so
+  a log sent in says which DLL wrote it and when.
 
 ## 0.2.0
 
