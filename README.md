@@ -77,7 +77,8 @@ it forward calls and do nothing else.
    [latest release](https://github.com/mightsleep/wow-font-d3d9/releases/latest).
 2. Copy it next to `Wow.exe`.
 3. Start the game. A `wow-font-d3d9.log` next to `Wow.exe` says the proxy
-   loaded.
+   loaded. Runs append to it; past 2 MiB it starts again and the
+   old one is kept as `wow-font-d3d9.log.old`.
 
 The proxy loads the real `d3d9.dll` from the system directory. If you
 already have a `d3d9.dll` in the game folder (DXVK, ReShade), rename it,

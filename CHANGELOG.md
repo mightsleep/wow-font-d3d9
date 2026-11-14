@@ -10,6 +10,8 @@ here.
   every move and Wine passes both on. With this the proxy answers the
   window's cursor question itself and nothing is hidden. Off unless
   asked for: it is the one thing the proxy does outside Direct3D 9.
+- The log no longer grows without end: past 2 MiB it starts again and
+  the old one is kept as `wow-font-d3d9.log.old`.
 
 ## 0.2.0
 

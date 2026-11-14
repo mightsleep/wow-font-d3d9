@@ -80,6 +80,10 @@ pub(crate) fn log(msg: &str) {
     write_log(msg, true);
 }
 
+/// Where the log starts again: 2 MiB, a few weeks of play or a day with
+/// tracing on.
+const LOG_MAX: u64 = 2 << 20;
+
 /// A line only if the log is free right now: for the panic hook and the
 /// process's end, where whoever holds it may never let go (a thread
 /// killed at exit, or the panicking thread itself, inside log).
@@ -93,6 +97,15 @@ fn write_log(msg: &str, wait: bool) {
     static F: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
     let f = F.get_or_init(|| {
         let path = beside_exe("wow-font-d3d9.log");
+        // Runs append, so the last ones are there to send. A log past
+        // LOG_MAX starts again and the old one stays beside it as .old
+        // (the one before that goes): two files of a size to attach,
+        // however long the DLL has been in the folder.
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_MAX) {
+            let old = format!("{}.old", path);
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&path, &old);
+        }
         Mutex::new(
             std::fs::OpenOptions::new()
                 .create(true)
